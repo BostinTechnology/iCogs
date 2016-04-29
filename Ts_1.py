@@ -76,12 +76,21 @@ def ReadStatus_Reg():
     logging.info ("Status Register setting (0x27):%s" % byte)
     #TODO: Decode the values
 
-def ReadHumidity():
-    #Read out and decode the 2 bytes of humidity readings
-    humidity_out_l = hex(bus.read_byte_data(0x5f,0x28))
-    humidity_out_h = hex(bus.read_byte_data(0x5f,0x29))
-    logging.info ("Humidity Reading (0x29/0x28):%s/%s" % (humidity_out_h, humidity_out_l))
-    #TODO: Merge the values into a signel reading
+def TurnOnSensor():
+    # set bit 7 of the CTRL Register 0x20
+    byte = bus.read_byte_data(0x5f,0x20)
+    logging.info ("Control Register Before turning on (0x20):%s" % hex(byte))
+    #Modifyt the register to set bit7 = 1 and bits1,0 to 01
+    towrite = byte | 0x80 | 0x01
+    logging.debug("Byte to write to turn on %s" % towrite)
+    bus.write_byte_data(0x5f, 0x20, towrite)
+    byte = bus.read_byte_data(0x5f,0x20)
+    logging.info ("Control Register After turning on (0x20):%s" % hex(byte))
+    return
+
+
+
+### Routines to read out the various temperature values and calculate the current temperature
 
 def ReadT_OUT():
     #Read out and decode the 2 bytes of temperature readings
@@ -152,18 +161,69 @@ def CalculateTemperature():
     logging.info("Calculated Temperature: %s" % T_DegC)
     return T_DegC
 
-def TurnOnSensor():
-    # set bit 7 of the CTRL Register 0x20
-    byte = bus.read_byte_data(0x5f,0x20)
-    logging.info ("Control Register Before turning on (0x20):%s" % hex(byte))
-    #Modifyt the register to set bit7 = 1 and bits1,0 to 01
-    towrite = byte | 0x80 | 0x01
-    logging.debug("Byte to write to turn on %s" % towrite)
-    bus.write_byte_data(0x5f, 0x20, towrite)
-    byte = bus.read_byte_data(0x5f,0x20)
-    logging.info ("Control Register After turning on (0x20):%s" % hex(byte))
-    return
-        
+
+### Routines to read out the various humidity values and calculate the current temperature
+def ReadH_OUT():
+    #Read out and decode the 2 bytes of humidity readings
+    h_out_l = bus.read_byte_data(0x5f,0x28)
+    h_out_h = bus.read_byte_data(0x5f,0x29)
+    logging.debug ("H_OUT Reading (0x28/0x29):%s/%s" % (hex(h_out_h), hex(h_out_l)))
+    #Merge the values into a single reading
+    h_out = (h_out_h << 8) + h_out_l
+    h_out = TwosCompliment(h_out)
+    logging.info ("H_OUT Reading combined (0x28/0x29):%s" % h_out)
+    return h_out
+
+def ReadH0_rH():
+    #Read out and decode the 1 byte of humidity calibraion reading H0
+    h0_rh = bus.read_byte_data(0x5f,0x30)
+    logging.debug ("H0 Calibration Readings (0x30):%s" % hex(h0_rh))
+    h0_rh = h0_rh / 2
+    logging.info("H0 Value:%s" % h0_rh)
+    return h0_rh
+
+def ReadH1_rH():
+    #Read out and decode the 1 byte of humidity calibraion reading H1
+    h1_rh = bus.read_byte_data(0x5f,0x31)
+    logging.debug ("H1 Calibration Readings (0x30):%s" % hex(h1_rh))
+    h1_rh = h1_rh / 2
+    logging.info("H1 Value:%s" % h1_rh)
+    return h1_rh
+
+def ReadH0_OUT():
+    #Read out and decode the 2 bytes of humidity calibration readings
+    h0_out_l = bus.read_byte_data(0x5f,0x36)
+    h0_out_h = bus.read_byte_data(0x5f,0x37)
+    logging.debug ("H0 OUT Reading (0x37/0x36):%s/%s" % (hex(h0_out_h), hex(h0_out_l)))
+    #Merge the values into a single reading
+    h0_out = (h0_out_h << 8) + h0_out_l
+    h0_out = TwosCompliment(h0_out)
+    logging.info ("H0 OUT combined (0x37/0x36):%s" % h0_out)
+    return h0_out
+
+def ReadH1_OUT():
+    #Read out and decode the 2 bytes of humidity calibration readings
+    h1_out_l = bus.read_byte_data(0x5f,0x3A)
+    h1_out_h = bus.read_byte_data(0x5f,0x3B)
+    logging.debug ("H1 OUT Reading (0x3B/0x3A):%s/%s" % (hex(h1_out_h), hex(h1_out_l)))
+    #Merge the values into a single reading
+    h1_out = (h1_out_h << 8) + h1_out_l
+    h1_out = TwosCompliment(h1_out)
+    logging.info ("H1 OUT combined (0x3B/0x3A):%s" % h1_out)
+    return h1_out
+
+def CalculateRelativeHumidity():
+    H_OUT = ReadH_OUT()
+    H0_rH = ReadH0_rH()
+    H1_rH = ReadH1_rH()
+    H0_OUT = ReadH0_OUT()
+    H1_OUT = ReadH1_OUT()
+    H_rH = (H0_rH + (H_OUT - H0_OUT) * (H1_rH - H0_rH) / (H1_OUT - H0_OUT))
+    logging.info("Calculated Relative Humidity: %s" % H_rH)
+    return H_rH
+
+
+
 #main
 
 bus = smbus.SMBus(1)
@@ -176,15 +236,18 @@ ReadCtrl_Reg1()
 ReadCtrl_Reg2()
 ReadCtrl_Reg3()
 ReadStatus_Reg()
-ReadHumidity()
 
-#TODO: Turn on the sensor!
+
 TurnOnSensor()
 
 
 while True:
     temp = CalculateTemperature()
     print ("Temperature Reading :%s" % temp)
+
+    humid = CalculateRelativeHumidity()
+    print ("Relative Humidity Reading :%s" % humid)
+
     time.sleep(0.5)
 
 
