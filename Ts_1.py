@@ -27,7 +27,6 @@ iCog = smbus.SMBus(i2cbus number)
 read_byte_data(address, register) - returns a string containing the value in hex
 write_byte_data(address, register, value)
 
-#TODO: make the read data out print it in a better formatted way
 """
 
 
@@ -46,15 +45,15 @@ def ReadAllData():
     # capture all the readings for printing later
     values = []
     # read each byte of data from 0x00 to 0xff
-    for addr in range(0x00,0xff):
+    for addr in range(0x00,0x100):
         byte = bus.read_byte_data(0x5f,addr)
         logging.debug ("Read All Data Byte %x:%x" % (addr, byte))
         values.append(byte)
     
     # print out the data, looping in steps of 16 to print the data out in blocks
-    for i in range(0x00, 0xf0, 0x10):
+    for i in range(0x00, 0xff, 0x10):
         print("Addr:%2x "% i, end="")
-        for j in range(0x0, 0xF):
+        for j in range(0x0, 0x):
             print(" %4x" % values[i+j], end="")
         print(" ")
     return
