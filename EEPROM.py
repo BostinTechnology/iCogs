@@ -35,6 +35,51 @@ import time
 import random
 
 
+def CalculateChecksum():
+    # Calculate the EEPROM checksum to go into bytes 0x0e and 0x0f
+    calc_sum = 0
+    print("Calculating Checksum")
+    # read each byte of data from 0x00 to 0xff
+    for addr in range(0x00,0x80):
+        byte = bus.read_byte_data(0x50,addr)
+        logging.debug ("Read Checksum Data Byte %x:%x" % (addr, byte))
+        if addr == 0x0e or addr == 0x0f:
+            # ignore the checksum bytes
+            byte = 0x00
+        calc_sum = calc_sum + byte
+    logging.debug("Sum of all bytes %x" % calc_sum)
+    checksum_h = ((calc_sum & 0xff00) >> 16)
+    checksum_l = (calc_sum & 0xff)
+    logging.info("Calculated Checksum %x/%x" % (checksum_h, checksum_l))
+    return checksum_h, checksum_l
+
+def WriteChecksum(chk):
+    # write the given checksum to the EEPROM
+    logging.debug("Writing data bytes %x/%x to the checksum" % (chk[0], chk[1]))
+    bus.write_byte_data(0x50, 0x0e, chk[0])    
+    time.sleep(0.5)
+    bus.write_byte_data(0x50, 0x0f, chk[1])
+    time.sleep(0.5)
+    logging.info("Checksum Written")
+    print("Written Checksum")
+    return
+
+def VerifyChecksum(chk):
+    #Check the checksum matches the calculated value
+    logging.info("Verifying the checksum") 
+    chk_read_h = bus.read_byte_data(0x50, 0x0e)
+    time.sleep(0.5)
+    chk_read_l = bus.read_byte_data(0x50, 0x0f)
+    logging.debug("Checksum Values read from EEPROM %x/%x" % (chk[0], chk[1]))
+    if (chk_read_h == chk[0]) and (chk_read_l == chk[1]):
+        print("Checksum matches")
+        logging.debug("Checksum matches calculated value")
+    else:
+        print("Checksum Error")
+        logging.critical("Checksum Error")
+    return
+
+    
 
 def WriteMapVersion():
     # Write the EEPROM Memory Map Version, currently 0.2
@@ -172,6 +217,7 @@ def ReadUUID():
         logging.debug("UUID Byte %x Read value %x" % (addr, byte))
         uuid = (uuid << 8) + byte
     logging.info("uuid value %8x" % uuid)
+    print("UUID :%8x" % uuid)
     return
 
 def ReadEEPROMManufacturer():
@@ -227,6 +273,16 @@ def WriteExampleData():
 
 def ReadExampleData():
     # Read the data from the user defined area
+    # Read the example data from a user defined area for storage
+    values = []
+    for addr in range(0x36, 0x3A):
+        byte = bus.read_byte_data(0x50, addr)
+        logging.debug("Reading Example data from address response %x" % byte)
+        values.append(hex(byte))
+        print(".", end="", flush=True)
+    print ("\n")
+    print("Example data read from the EEPROM %s" % values)
+    logging.info("Example data read from the eeprom %s" % values)
     return
 
 def ReadAllData():
@@ -257,7 +313,10 @@ def HelpText():
     print("W - Write map defaults")
     print("U - Read EEPROM Manufactureres data")
     print("X - write eXample data")
+    print("R - Read example data")
     print("A - read All data")
+    print("C - write Checksum")
+    print("v - Verify Checksum")
     print("e - Exit Program")
 
 
@@ -285,10 +344,18 @@ while True:
         WriteDefaults()
     elif choice == "X":
         WriteExampleData()
+    elif choice == "R":
+        ReadExampleData()
     elif choice == "U":
         ReadEEPROMData()
     elif choice == "A":
         ReadAllData()
+    elif choice =="C":
+        csum = CalculateChecksum()
+        WriteChecksum(csum)
+        VerifyChecksum(csum)
+    elif choice == "v":
+        VerifyChecksum(CalculateChecksum())
     elif choice == "E" or choice == "e":
         sys.exit()
 
