@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 
 """
-iCogs Ls.1 Reader
+iCogs Rs.2 Reader
 
 For more information see www.BostinTechnology.com
 
-The ls.1 is based on the ISL29023 Integrated Digital Light Sensor, but like all iCogs,
+The Rs.s is based on the MMA8652FC 3-Axis, 12-bit Digital Accelerometer, but like all iCogs,
 comes with an additional EEPROM to provide the capability to store additional information e.g
 enviromental specific data.
 
@@ -31,7 +31,7 @@ write_byte_data(address, register, value)
 
 ##
 ##
-## This software is ready to test, not yet tested.
+## This software is a copy of Ls.1 and NOT completed..
 ##
 ##
 
@@ -42,7 +42,7 @@ import time
 import math
 import sys
 
-SENSOR_ADDR = 0x60
+SENSOR_ADDR = 0x1d
 
 def ReadAllData():
     # Read out all 255 bytes from the device
@@ -61,6 +61,25 @@ def ReadAllData():
             print(" %4x" % values[i+j], end="")
         print(" ")
     return
+
+def WhoAmI():
+    # Read out and confirm the 'Who Am I' value of 0xBC
+    byte = bus.read_byte_data(SENSOR_ADDR,0x0F)
+    if byte == 0x4A:
+        print("Identified as Correct Device :%x" % byte)
+    else:
+        print("Check the Device WhoAm I as it is unrecognised")
+    logging.info ("Who Am I (0x0f):%s" % byte)
+    return
+
+
+
+
+
+
+### START OF LS.1 FUNCTIONS ###
+
+
 
 def ReadCommandReg1():
     #Read out and decode the first command register
@@ -316,12 +335,37 @@ def CalculateLux():
     print("Calculated LUX Value: %f" % lux)
     return lux
 
+
+
+### END OF LS_1 FUNCTIONS ###
+
+
+
+
+def SelfTest():
+    print("Not yet implemented")
+    return
+
+
+"""
+Functions to implement
+
+- Standby Mode
+- Active Mode
+- Tap Detection
+- Read out the 3 axis of g force
+- Who AM I
+
+modes can only be changed when in standby - see (4) in register table
+"""
+
 def HelpText():
     # show the help text
     print("**************************************************************************\n")
     print("Available commands: -")
-    print("1 - Read Command Register 1")
-    print("2 - Read Command Register 2")
+    print("\nNOT COMPLETED\n")
+    print("s - Self Test")
+    print("w - Who Am I")
     print("A - Read all data blocks")
     print("L - Calculate lux Reading")
     print("t - Turn on ALS Mode")
@@ -335,14 +379,14 @@ def HelpText():
 
 print ("Bostin Technology Ltd")
 print ("Cogniot Products")
-print ("Ls.1 - Digital Light Sensor")
+print ("Rs.2 - 3 Axis Rate Sensor")
 print ("")
 print ("Press h for help")
 print ("")
 
 bus = smbus.SMBus(1)
 
-logging.basicConfig(filename="Ls_1.txt", filemode="w", level=logging.DEBUG, format='%(asctime)s:%(levelname)s:%(message)s')
+logging.basicConfig(filename="Rs_2.txt", filemode="w", level=logging.DEBUG, format='%(asctime)s:%(levelname)s:%(message)s')
 
 
 while True:
@@ -354,14 +398,19 @@ while True:
 
     if choice == "H" or choice == "h":
         HelpText()
-    elif choice == "1":
-        ReadCommandReg1()
+    elif choice == "A":
+        ReadAllData()
+    elif choice == "E" or choice == "e":
+        sys.exit()
+    elif choice == "s":
+        SelfTest()
+    elif choice == "w":
+        WhoAmI()
+
     elif choice == "2":
         ReadCommandReg2()
     elif choice == "L":
         CalculateLux()
-    elif choice == "A":
-        ReadAllData()
     elif choice == "t":
         SensorRangeResolution()
         SensorALSMode()
@@ -369,8 +418,7 @@ while True:
         SensorIRMode()
     elif choice == "o":
         TurnOffSensor()
-    elif choice == "E" or choice == "e":
-        sys.exit()
+
     else:
         print("Unknown Option")
         print("")
