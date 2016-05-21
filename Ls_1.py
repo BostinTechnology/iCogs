@@ -36,13 +36,20 @@ write_byte_data(address, register, value)
 ##
 
 
+#BUG: Need to check all uses of bit setting, ORing bytes is great for gsetting bits
+#       but no use for clearing bits!
+#           towrite = (byte & mask) | mode
+
+#TODO: Use reg_addr = 0xxx in all registers
+
+
 import smbus
 import logging
 import time
 import math
 import sys
 
-SENSOR_ADDR = 0x60
+SENSOR_ADDR = 0x44
 
 def ReadAllData():
     # Read out all 255 bytes from the device
@@ -145,7 +152,7 @@ def TurnOffSensor():
     bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("Command Register After turning off (0x00):%x" % byte)
-    if (byte & 0b11100000) >> 5 > 1:
+    if (byte & 0b1110) >> 5 > 1:
         print("Sensor Turned on")
     else:
         print("Sensor Turned off")
@@ -164,7 +171,7 @@ def SensorALSMode():
     time.sleep(0.5)
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("Command Register After turning on ALS mode (0x00):%x" % byte)
-    if (byte & 0b10100000) >> 5 == 0b101:
+    if (byte & 0b11100000) >> 5 == 0b101:
         print("Sensor Turned on in ALS mode")
     else:
         print("Sensor Not in ALS mode")
@@ -182,7 +189,7 @@ def SensorIRMode():
     bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("Command Register After turning on ALS mode (0x00):%x" % byte)
-    if (byte & 0b10100000) >> 5 == 0b110:
+    if (byte & 0b11100000) >> 5 == 0b110:
         print("Sensor Turned on in IR mode")
     else:
         print("Sensor Not in IR mode")
@@ -290,13 +297,13 @@ def ReadSensorMode():
     mode = ""
     if omb == 0b000:
         mode = ""
-    elif ipd == 0b001:
+    elif omb == 0b001:
         mode = "ALS"
-    elif ipd == 0b010:
+    elif omb == 0b010:
         mode = "IR"
-    elif ipd == 0b101:
+    elif omb == 0b101:
         mode = "ALS"
-    elif ipd == 0b110:
+    elif omb == 0b110:
         mode = "IR"
     logging.info("Sensor Mode of Operation :%s" % mode)
     return mode
@@ -326,7 +333,7 @@ def HelpText():
     print("L - Calculate lux Reading")
     print("t - Turn on ALS Mode")
     print("i - Turn on IR Mode")
-    print("f - Turn off Sensor")
+    print("o - Turn off Sensor")
     print("e - Exit Program")
 
 

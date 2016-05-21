@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 
 """
-iCogs Rs.2 Reader
+iCogs Ps.3 Reader
 
 For more information see www.BostinTechnology.com
 
-The Rs.2 is based on the MMA8652FC 3-Axis, 12-bit Digital Accelerometer, but like all iCogs,
+The Ps.3 is based on the MPL3115A2 Absolute Pressure Sensor, but like all iCogs,
 comes with an additional EEPROM to provide the capability to store additional information e.g
 enviromental specific data.
 
@@ -18,7 +18,6 @@ the following
     Save and Exit
 
 Note: The operating modes can only be changed when in standby.
-
 
 The code here is experimental, and is not intended to be used in a production environment. It
 demonstrates the basics of what is required to get the Raspberry Pi receiving data from the
@@ -41,20 +40,16 @@ write_byte_data(address, register, value)
 
 ##
 ##
-## This software is ready for testing
+## This software is completely new and copied from Ps.2
 ##
 ##
-
 
 #BUG: Need to check all uses of bit setting, ORing bytes is great for gsetting bits
 #       but no use for clearing bits!
-#       towrite = byte & (mask | mode)
-
-#BUG: Self Test isn't returning the right values
-
-#BUG: Reading of values may be incorrect
+#           towrite = (byte & mask) | mode
 
 #TODO: Use reg_addr = 0xxx in all registers
+
 
 import smbus
 import logging
@@ -62,12 +57,11 @@ import time
 import math
 import sys
 
-SENSOR_ADDR = 0x1d
+SENSOR_ADDR = 0x60
 
-#Full Scale Ranges
-TWOG = 0b00
-FOURG = 0b01
-EIGHTG = 0b10
+#Sensor Modes
+STANDBY = 0b0
+ACTIVE = 0b1
 
 def ReadAllData():
     # Read out all 255 bytes from the device
@@ -88,14 +82,21 @@ def ReadAllData():
     return
 
 def WhoAmI():
-    # Read out and confirm the 'Who Am I' value of 0x4a
-    byte = bus.read_byte_data(SENSOR_ADDR,0x0d)
-    if byte == 0x4A:
+    # Read out and confirm the 'Who Am I' value of 0xC4
+    byte = bus.read_byte_data(SENSOR_ADDR,0x0C)
+    if byte == 0xC4:
         print("Identified as Correct Device :%x" % byte)
     else:
         print("Check the Device WhoAm I as it is unrecognised")
-    logging.info ("Who Am I value expected 0x4a from address 0x0d received:%s" % byte)
+    logging.info ("Who Am I - Address 0x0C (0xC4):%s" % byte)
     return
+
+#####################################################
+###
+### NONE of these commands has been tested and done anything with
+###
+#####################################################
+
 
 def ReadF_Setup():
     #Read out and decode the F_Setup Register 0x09
@@ -117,7 +118,7 @@ def ReadF_Setup():
     # FIFO Event Sample Count Watermark
     fescw = (byte & 0b00111111)
     logging.debug("FIFO Event Sample Count Watermark %s" % fescw)
-    print ("Rs.2 FIFO Event Sample Count Watermark %s" % fescw)
+    print ("FIFO Event Sample Count Watermark %s" % fescw)
     return
 
 def ReadSystemMode():
@@ -136,7 +137,7 @@ def ReadSystemMode():
     # Number of ODR time units since FIFO Gate Error
     fgerr = (byte & 0b01111100)
     logging.debug("Number of ODR time units since FIFO Gate Error %s" % fgerr)
-    print ("Rs.2 Number of ODR time units since FIFO Gate Error %s" % fgerr)
+    print ("Number of ODR time units since FIFO Gate Error %s" % fgerr)
     # System Mode
     sysmod = (byte & 0b00000011)
     logging.debug("System Modebits %s" % sysmod)
@@ -149,21 +150,20 @@ def ReadSystemMode():
     return
 
 def SetSystemMode(mode):
-    # Set the System Mode in the SYSMOD Register 0x2A, it can be read from 0x0B
-    # mode can be either STANDBY (0b0) or ACTIVE (0b1)
-    reg_addr = 0x2A
-    mask = 0b11111110
+    #Set the System Mode in the SYSMOD Register 0x0B
+    # mode can be either STANDBY, WAKE, SLEEP
+    reg_addr = 0x0B
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("CTRL_REG1 Register before setting (%x):%x" % (reg_addr,byte))
+    logging.info ("SYSMOD Register before setting (%x):%x" % (reg_addr,byte))
     logging.debug("Requested mode of operation %x" % mode)
-    # Modify the register to set bit 0 to the mode
-    towrite = (byte & mask) | mode
-    logging.debug("Byte to write to turn on the requested mode %x" % towrite)
+    # Modify the register to set bits 1 - 0 to the mode
+    towrite = byte | mode
+    logging.debug("Byte to write to turn on the reqeusted mode %x" % towrite)
     bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
     time.sleep(0.5)
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("CTRL_REG1 Register After turning on the required mode:%x" % byte)
-    if (byte & 0b00000001) == mode:
+    logging.info ("SYSMOD Register After turning on the required mode:%x" % byte)
+    if (byte & 0b00000011) == mode:
         print("Sensor Turned in to requested mode")
     else:
         print("Sensor Not in the requested mode")
@@ -197,12 +197,11 @@ def SetFullScaleMode(mode):
     #Set the Full Scale Mode in the XYZ_DATA_CFG Register 0x0E
     # mode can be either TWOG, FOURG, EIGHTG
     reg_addr = 0x0e
-    mask = 0b11111100
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("XYZ_DATA_CFG Register before setting (%x):%x" % (reg_addr,byte))
     logging.debug("Requested Full Scale mode of operation %x" % mode)
     # Modify the register to set bits 1 - 0 to the mode
-    towrite = (byte & mask) | mode
+    towrite = byte | mode
     logging.debug("Byte to write to turn on the Full Scale mode %x" % towrite)
     bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
     time.sleep(0.5)
@@ -268,16 +267,12 @@ def ReadControlRegister2():
 def EnableSelfTest():
     # Enable the Self Test using CTRL_Register 0x2b
     reg_addr = 0x0e
-    # Firstly read the x,y, z values to set a baseline
-    fsr = ReadFullScaleMode()
-    bst_values = CalculateValues(fsr)
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("Control Register 2 before enabling Self Test (%x):%x" % (reg_addr,byte))
     # Modify the register to set bit 7 to 0b1
     towrite = byte | 0b10000000
     logging.debug("Byte to write to turn on the Self Test %x" % towrite)
     bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
-    ist_values = CalculateValues(fsr)
     time.sleep(0.5)
     in_st = 1
     while in_st:
@@ -287,14 +282,7 @@ def EnableSelfTest():
         in_st = (byte & 0b10000000) >> 7
         if in_st == 0b1:
             print("Sensor In Self Test")
-    print ("Self Test Completed, values below (before / during)\n")
-    print(" Y |             :%f / %f" % (bst_values[1], ist_values[1]))
-    print("   |")
-    print("   |   Z         :%f / %f" % (bst_values[2], ist_values[2]))
-    print("   |  / ")
-    print("   | /")
-    print("   |_________ X  :%f / %f" % (bst_values[0], ist_values[0]))
-    print("\n")
+    print ("Self Test Completed")
     return
 
 def SoftwareReset():
@@ -331,7 +319,6 @@ def ReadFullScaleMode():
     # Full Scale Range setting
     fsr = (byte & 0b00000011)
     logging.debug("Full Scale Mode Reading  setting %s" % fsr)
-    fsr_multiplier = 1
     if fsr == 0b00:
         fsr_multiplier = 1/1024
     elif fsr == 0b01:
@@ -370,17 +357,16 @@ def ReadZAxisDataRegisters():
     logging.info("Z Axis Data Register combined %x" % data_out)
     return data_out
 
-def CalculateValues(fsr):
+def CalculateValues():
     # Takes the readings and returns the x, y, z values
-    # Given the current Full Scale Range
+    fsr = ReadFullScaleMode()
     x = ReadXAxisDataRegisters()
-    y = ReadYAxisDataRegisters()
-    z = ReadZAxisDataRegisters()
-
     x = TwosCompliment(x)
     x = x * fsr
+    y = ReadYAxisDataRegisters()
     y = TwosCompliment(y)
     y = y * fsr
+    z = ReadZAxisDataRegisters ()
     z = TwosCompliment(z)
     z = z * fsr
     return [x, y, z]
@@ -410,14 +396,14 @@ def HelpText():
 
 print ("Bostin Technology Ltd")
 print ("Cogniot Products")
-print ("Rs.2 - 3 Axis Rate Sensor")
+print ("Ps.3 - TO BE COMPLETED")
 print ("")
 print ("Press h for help")
 print ("")
 
 bus = smbus.SMBus(1)
 
-logging.basicConfig(filename="Rs_2.txt", filemode="w", level=logging.DEBUG, format='%(asctime)s:%(levelname)s:%(message)s')
+logging.basicConfig(filename="Ps_3.txt", filemode="w", level=logging.DEBUG, format='%(asctime)s:%(levelname)s:%(message)s')
 
 
 while True:
@@ -429,60 +415,54 @@ while True:
         ReadAllData()
     elif choice == "E" or choice == "e":
         sys.exit()
-    elif choice == "T":
-        EnableSelfTest()
+    #elif choice == "T":
+        #EnableSelfTest()
     elif choice == "w":
         WhoAmI()
-    elif choice == "x":
-        fullscalerange = ReadFullScaleMode()
-        g_force = CalculateValues(fullscalerange)
-        print(" Y |             :%f" % g_force[1])
-        print("   |")
-        print("   |   Z         :%f" % g_force[2])
-        print("   |  / ")
-        print("   | /")
-        print("   |_________ X  :%f" % g_force[0])
-        print("\n")
-    elif choice == "r":
-        SoftwareReset()
-    elif choice == "c":
-        ReadF_Setup()
-        ReadSystemMode()
-        ReadXYZ_Data_Cfg()
-        ReadControlRegister2()
-    elif choice == "s":
-        #Set System Mode()
-        print("Select =Mode:-")
-        print("1 - STANDBY")
-        print("2 - ACTIVE")
-        print("0 - return")
-        mode = int(input ("Mode:"))
-        if mode == 1:
-            SetSystemMode(0b0)
-        elif mode == 2:
-            SetSystemMode(0b1)
-        elif mode == 0:
-            time.sleep(0.1)
-        else:
-            print("Unknown System Mode Option")
-    elif choice == "f":
-        # Set Full Scale Mode()
-        print("Select Full Scale Range:-")
-        print("2 - 2 G")
-        print("4 - 4 G")
-        print("8 - 8 G")
-        print("0 - return")
-        full = int(input ("Range:"))
-        if full == 2:
-            SetFullScaleMode(TWOG)
-        elif full == 4:
-            SetFullScaleMode(FOURG)
-        elif full == 8:
-            SetFullScaleMode(EIGHTG)
-        elif mode == 0:
-            time.sleep(0.1)
-        else:
-            print("Unknown Full Scale Mode Option")
+    #elif choice == "x":
+        #g_force = CalculateValues()
+        #print(" Y |             :%f" % g_force[1])
+        #print("   |")
+        #print("   |   Z         :%f" % g_force[2])
+        #print("   |  / ")
+        #print("   | /")
+        #print("   |_________ X  :%f" % g_force[0])
+        #print("/n")
+    #elif choice == "r":
+        #SoftwareReset()
+    #elif choice == "c":
+        #ReadF_Setup()
+        #ReadSystemMode()
+        #ReadXYZ_Data_Cfg()
+        #ReadControlRegister2()
+    #elif choice == "s":
+        ##Set System Mode()
+        #print("Select =Mode:-")
+        #print("1 - STANDBY")
+        #print("2 - WAKE")
+        #print("3 - SLEEP")
+        #print("0 - return")
+        #mode = int(input ("Mode:"))
+        #if mode == 1:
+            #SetSystemMode(STANDBY)
+        #elif mode == 2:
+            #SetSystemMode(WAKE)
+        #elif mode == 3:
+            #SetSystemMode(SLEEP)
+    #elif choice == "f":
+        ## Set Full Scale Mode()
+        #print("Select Full Scale Range:-")
+        #print("2 - 2 G")
+        #print("4 - 4 G")
+        #print("8 - 8 G")
+        #print("0 - return")
+        #full = int(input ("Range:"))
+        #if full == 2:
+            #SetFullScaleMode(TWOG)
+        #elif full == 2:
+            #SetFullScaleMode(FOURG)
+        #elif full == 3:
+            #SetFullScaleMode(EIGHTG)
     else:
         print("Unknown Option")
         print("")

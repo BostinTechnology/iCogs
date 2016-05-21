@@ -35,11 +35,18 @@ import time
 import math
 import sys
 
+#BUG: Need to check all uses of bit setting, ORing bytes is great for gsetting bits
+#       but no use for clearing bits!
+#       towrite = (byte & mask) | mode
+
+#TODO: Use reg_addr = 0xxx in all registers
+
+
 SENSOR_ADDR = 0x5f
 
 def TwosCompliment(value):
     # Convert the given 16bit hex value to decimal using 2's compliment
-    return -(value & 0b100000000000) | (value & 0b011111111111)
+    return -(value & 0b1000000000000000) | (value & 0b0111111111111111)
 
 def ReadAllData():
     # Read out all 255 bytes from the device
@@ -54,7 +61,7 @@ def ReadAllData():
     # print out the data, looping in steps of 16 to print the data out in blocks
     for i in range(0x00, 0xff, 0x10):
         print("Addr:%2x "% i, end="")
-        for j in range(0x0, 0x):
+        for j in range(0x0, 0x10):
             print(" %4x" % values[i+j], end="")
         print(" ")
     return
