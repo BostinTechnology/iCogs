@@ -10,12 +10,14 @@ comes with an additional EEPROM to provide the capability to store additional in
 enviromental specific data.
 
 This module uses 'Repeated Start' (see www.i2c-bus.org/repeated-start-condition) so requires
-the following
-1. Navigate to /sys/module/i2c_bcm2708/parameters
-2. Modify 'combined'
-    sudo nano combined
-    change N to Y
-    Save and Exit
+the following which is done programmatically
+1. Open a terminal window
+2. Run the following comamnds
+    sudo su -
+    echo -n 1 > /sys/module/i2c_bcm2708/parameters/combined
+    exit
+
+This changes the contents of combined to 'Y' in /sys/module/i2c_bcm2708/parameters, default is 'N'
 
 Note: The operating modes can only be changed when in standby.
 
@@ -55,12 +57,14 @@ write_byte_data(address, register, value)
 #BUG: Reading of values may be incorrect
 
 #TODO: Use reg_addr = 0xxx in all registers
+#TODO: Write some code to do Tap Detection
 
 import smbus
 import logging
 import time
 import math
 import sys
+import subprocess
 
 SENSOR_ADDR = 0x1d
 
@@ -68,6 +72,24 @@ SENSOR_ADDR = 0x1d
 TWOG = 0b00
 FOURG = 0b01
 EIGHTG = 0b10
+
+#Operating Modes
+STANDBY = 0b0
+ACTIVE = 0b1
+
+def SetRepeatedStartMode():
+    # This function sets the I2C bus to use Repeated Start Mode
+    # Command to run as Superuser is
+    #   echo -n 1 > /sys/module/i2c_bcm2708/parameters/combined
+    logging.info("Setting Repeated Start for I2C comms")
+    try:
+        response = subprocess.call("echo -n 1 > /sys/module/i2c_bcm2708/parameters/combined", shell=True)
+        logging.debug("Used subprocess call to set Repeated Start command and got this response %x" % response)
+    except:
+        logging.critical("Failed to Set Repeated Start mode, program aborted")
+        print("Failed to Set Repeated Start mode, program aborted")
+        sys.exit()
+
 
 def ReadAllData():
     # Read out all 255 bytes from the device
@@ -154,19 +176,19 @@ def SetSystemMode(mode):
     reg_addr = 0x2A
     mask = 0b11111110
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("CTRL_REG1 Register before setting (%x):%x" % (reg_addr,byte))
-    logging.debug("Requested mode of operation %x" % mode)
+    logging.info ("Set System Mode (CTRL_REG1) before setting (%x): %x" % (reg_addr,byte))
+    logging.debug("Requested System Mode of operation %x" % mode)
     # Modify the register to set bit 0 to the mode
     towrite = (byte & mask) | mode
-    logging.debug("Byte to write to turn on the requested mode %x" % towrite)
+    logging.debug("Byte to write to turn on the requested system Mode: %x" % towrite)
     bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
     time.sleep(0.5)
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("CTRL_REG1 Register After turning on the required mode:%x" % byte)
+    logging.info ("Set System Mode (CTRL_REG1) Register After turning on the required mode: %x" % byte)
     if (byte & 0b00000001) == mode:
-        print("Sensor Turned in to requested mode")
+        print("Sensor Turned in to requested System Mode: %x" % mode)
     else:
-        print("Sensor Not in the requested mode")
+        print("Sensor Not in the requested System Mode: %x" % mode)
     return
 
 def ReadXYZ_Data_Cfg():
@@ -265,36 +287,97 @@ def ReadControlRegister2():
         print("Rs.2 Active Mode Power Mode: Low Power")
     return
 
-def EnableSelfTest():
-    # Enable the Self Test using CTRL_Register 0x2b
-    reg_addr = 0x0e
-    # Firstly read the x,y, z values to set a baseline
-    fsr = ReadFullScaleMode()
-    bst_values = CalculateValues(fsr)
-    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("Control Register 2 before enabling Self Test (%x):%x" % (reg_addr,byte))
-    # Modify the register to set bit 7 to 0b1
-    towrite = byte | 0b10000000
-    logging.debug("Byte to write to turn on the Self Test %x" % towrite)
-    bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
-    ist_values = CalculateValues(fsr)
-    time.sleep(0.5)
-    in_st = 1
-    while in_st:
-        # Wait while the self test runs
-        byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-        logging.info ("Control Register 2 After turning on the Self Test:%x" % byte)
-        in_st = (byte & 0b10000000) >> 7
-        if in_st == 0b1:
-            print("Sensor In Self Test")
-    print ("Self Test Completed, values below (before / during)\n")
-    print(" Y |             :%f / %f" % (bst_values[1], ist_values[1]))
+def SelfTest():
+    """
+    Run the self test routine and capture the results. Steps required
+    Set the sensor in Standby by clearing the ACTIVE bit in CTRL_REG1 register (0x2A)
+    Set the Full Scale mode to 2g
+    Set the sensor into Self Test by setting the ST bit in CTRL_REG2 (0x2B)
+    Set the Sensor back into ACTIVE mode by setting the ACTIVE bit in CTRL_REG1 register (0x2A)
+    Measure the values from the 3 axis (take multiple samples)
+    Set the sensor in Standby by clearing the ACTIVE bit in CTRL_REG1 register (0x2A)
+    End the Self Test by clearing the ST bit in CTRL_REG2 (0x2B)
+    Set the Sensor back into ACTIVE mode by setting the ACTIVE bit in CTRL_REG1 register (0x2A)
+    Measure the values from the 3 axis (take multiple samples)
+
+    Then simply compute the difference between the acceleration output of all axes with self-test enabled
+    (ST = 1) and disabled (ST = 0) as follows:
+
+    XST = XST_ON − XST_OFF
+    YST = YST_ON − YST_OFF
+    ZST = ZST_ON − ZST_OFF
+
+    The difference is based on a full scale mode of 2g although the values are not calculated
+    range   x       y       z
+    2g      +90     +104    +782
+
+    """
+    # Need to get the full scale mode for later use
+    fullscalerange = ReadFullScaleMode()
+    SetFullScaleMode(TWOG)
+
+    SetSystemMode(STANDBY)
+    SetSelfTest(False)
+    SetSystemMode(ACTIVE)
+    print ("Capturing Values")
+    out_selftest = CalculateAvgValues(fullscalerange)
+    print ("Set into STANDBY mode")
+    SetSystemMode(STANDBY)
+    print ("Enable Self Test mode")
+    SetSelfTest(True)
+    print ("Set into ACTIVE mode")
+    SetSystemMode(ACTIVE)
+    print ("Capturing Values")
+    in_selftest = CalculateAvgValues(fullscalerange)
+    print ("Set into STANDBY mode")
+    SetSystemMode(STANDBY)
+    print ("DISable Self Test mode")
+    SetSelfTest(False)
+
+    print("\nValues Before / During Self Test (Non Calibrated Values)")
+    print(" Y |             :%f / %f" % (out_selftest[1],in_selftest[1]))
     print("   |")
-    print("   |   Z         :%f / %f" % (bst_values[2], ist_values[2]))
+    print("   |   Z         :%f / %f" % (out_selftest[2],in_selftest[2]))
     print("   |  / ")
     print("   | /")
-    print("   |_________ X  :%f / %f" % (bst_values[0], ist_values[0]))
+    print("   |_________ X  :%f / %f" % (out_selftest[0],in_selftest[0]))
     print("\n")
+
+    # Check for Self Test Pass
+    # X increase of 90, y increase of 104, z increase of 782 (these are non calibrated!)
+    if (in_selftest[0] - out_selftest[0]) > (90 * 0.75):
+        print("X - PASS")
+    else:
+        print("X - FAIL")
+    if (in_selftest[1] - out_selftest[1]) > (104 * 0.75):
+        print("Y - PASS")
+    else:
+        print("Y - FAIL")
+    if (in_selftest[2] - out_selftest[2]) > (782 * 0.75):
+        print("Z - PASS")
+    else:
+        print("Z - FAIL")
+
+    return
+
+def SetSelfTest(onoff):
+    """
+    To activate the self-test by setting the ST bit in the CTRL_REG2 register (0x2B).
+
+    """
+    # Enable the Self Test using CTRL_Register 0x2b
+    reg_addr = 0x2b
+    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+    logging.info ("Self Test byte before setting Self Test bit (%x):%x" % (reg_addr,byte))
+    # Modify the register to set bit 7 to on or off
+    mask = 0b01111111
+    towrite = (byte & mask) | (onoff << 7)
+    logging.debug("Self Test Byte to write to turn on the Self Test %x" % towrite)
+    bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
+    time.sleep(0.5)
+    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+    logging.info ("Self Test After turning on the required mode:%x" % byte)
+
     return
 
 def SoftwareReset():
@@ -318,6 +401,36 @@ def SoftwareReset():
     print ("Software Reset Completed")
     return
 
+def TapDetection():
+    """
+    This is how I'm configuring the sensor so far:
+
+    // Enter STANDBY mode
+    accel.write(MMA8652_CTRL_REG1  0);
+    // set the INT_EN_PULSE bit by writing 0x08 to the CTRL_REG4 register
+
+    // Dynamic range
+    accel.write(MMA8652_XYZ_DATA_CFG  0);  // Dynamic range = +-2g
+    // Enable interrupts
+    accel.write(MMA8652_CTRL_REG3, 0x10)   // Pulse function interrupt can wake-up system
+    // Enable Pulse detection
+    accel.write(MMA8652_CTRL_REG4, 0x04)   // Enable Pulse Detection Interrupt
+    // Enable pulse detection on each axis
+    accel.write(MMA8652_PULSE_CFG, 0x55);  // Enable single Pulse Detection on all axis
+    // Pulse thresholds
+    accel.write(MMA8652_PULSE_THSX, 0x0A); // Threshold X = 10
+    accel.write(MMA8652_PULSE_THSY, 0x0A); // Threshold Y = 10
+    accel.write(MMA8652_PULSE_THSZ, 0x0A); // Threshold Z = 10
+    // Enter ACTIVE mode
+    accel.write(MMA8652_CTRL_REG1  0x21);    // ACTIVE mode, Normal mode, data rate = 400 Hz
+
+    The above code is supposed to generate a (falling) interrupt on INT2 when a tap or double-tap
+    event is detected but it's not the case. Is there any sample code where I could get some ideas from?
+
+    """
+
+    return
+
 
 ######### Calculation Routines
 
@@ -330,7 +443,7 @@ def ReadFullScaleMode():
     # Decode the values
     # Full Scale Range setting
     fsr = (byte & 0b00000011)
-    logging.debug("Full Scale Mode Reading  setting %s" % fsr)
+    logging.debug("Full Scale Mode Reading setting %s" % fsr)
     fsr_multiplier = 1
     if fsr == 0b00:
         fsr_multiplier = 1/1024
@@ -338,6 +451,7 @@ def ReadFullScaleMode():
         fsr_multiplier = 1/512
     elif fsr == 0b10:
         fsr_multiplier = 1/256
+    logging.info("Full Scale Mode setting %f" % fsr_multiplier)
     return fsr_multiplier
 
 def ReadXAxisDataRegisters():
@@ -385,6 +499,32 @@ def CalculateValues(fsr):
     z = z * fsr
     return [x, y, z]
 
+def CalculateAvgValues(fsr):
+    # Takes 10 sets of readings and returns the averaged x, y, z values
+    # Given the current Full Scale Range
+    avg_x = 0
+    avg_y = 0
+    avg_z = 0
+    for n in range(0,10):
+        x = ReadXAxisDataRegisters()
+        y = ReadYAxisDataRegisters()
+        z = ReadZAxisDataRegisters()
+        x = TwosCompliment(x)
+        #x = x * fsr
+        y = TwosCompliment(y)
+        #y = y * fsr
+        z = TwosCompliment(z)
+        #z = z * fsr
+        avg_x = avg_x + x
+        avg_y = avg_y + y
+        avg_z = avg_z + z
+
+    avg_x = avg_x / 10
+    avg_y = avg_y / 10
+    avg_z = avg_z / 10
+
+    return [avg_x, avg_y, avg_z]
+
 def TwosCompliment(value):
     # Convert the given 12bit hex value to decimal using 2's compliment
     return -(value & 0b100000000000) | (value & 0b011111111111)
@@ -419,6 +559,8 @@ bus = smbus.SMBus(1)
 
 logging.basicConfig(filename="Rs_2.txt", filemode="w", level=logging.DEBUG, format='%(asctime)s:%(levelname)s:%(message)s')
 
+#Set Repeated Start Mode
+SetRepeatedStartMode()
 
 while True:
     choice = input ("Select Menu Option:")
@@ -430,7 +572,7 @@ while True:
     elif choice == "E" or choice == "e":
         sys.exit()
     elif choice == "T":
-        EnableSelfTest()
+        SelfTest()
     elif choice == "w":
         WhoAmI()
     elif choice == "x":
@@ -458,9 +600,9 @@ while True:
         print("0 - return")
         mode = int(input ("Mode:"))
         if mode == 1:
-            SetSystemMode(0b0)
+            SetSystemMode(STANDBY)
         elif mode == 2:
-            SetSystemMode(0b1)
+            SetSystemMode(ACTIVE)
         elif mode == 0:
             time.sleep(0.1)
         else:
