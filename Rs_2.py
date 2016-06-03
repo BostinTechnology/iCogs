@@ -38,29 +38,25 @@ iCog = smbus.SMBus(i2cbus number)
 read_byte_data(address, register) - returns a string containing the value in hex
 write_byte_data(address, register, value)
 
+Explanation of the use of masking
+mode = the required values of the bits
+mask = 0b00001100                                   # mask bits set to 1 are the ones to change
+shift = 2                                           # How many bits to shift the mode to match the mask
+byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)     # Read the register from the sensor
+# Modify the register to set bits 1 - 0 to the mode
+towrite = (byte & ~mask) | (mode << shift)          # by ANDing the byte with the inverse of the mask, any bit
+                                                    # that is not required is unchanged, but the bits required by the mask
+                                                    # are set to zero
+                                                    # When ORed with the required mode, the bits are set accordingly
+bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
+time.sleep(WAITTIME)                                # Allow the sensor to complete the write before reading
+byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+if (byte & mask) == (mode << shift):                # by ANDing the register value with the mask, we can compare it
+                                                    # to the required values and check they match
+
+NOTE: For some functions need to also shift the bits
+
 """
-
-
-##
-##
-## This software is ready for testing
-##
-##
-
-
-#BUG: Need to check all uses of bit reading and setting,
-#       but no use for clearing bits!
-#       towrite = byte & (mask | mode)  0b1010 & (0b1100 | 0b01) = 0b1001
-#                                                   0b1101
-#       if byte & mask == mode . . .
-#
-#       mask needs to be 1 for bits to ignore and 0 for bits to change.
-#       towrite = (byte & mask) | mode  (0b1010 & 0b1100) | 0b01 = 1001
-#       if byte & mask == ~mode . . .
-
-
-#BUG: Reading of values may be incorrect
-
 
 import smbus
 import logging
@@ -70,6 +66,9 @@ import sys
 import subprocess
 
 SENSOR_ADDR = 0x1d
+
+# The time between a write and subsequent read
+WAITTIME = 0.5
 
 #Full Scale Ranges
 TWOG = 0b00
@@ -278,62 +277,73 @@ def SetFullScaleMode(mode):
     #Set the Full Scale Mode in the XYZ_DATA_CFG Register 0x0E
     # mode can be either TWOG, FOURG, EIGHTG
     reg_addr = 0x0e
-    mask = 0b11111100
+    mask = 0b00000011
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("XYZ_DATA_CFG Register before setting (%x):%x" % (reg_addr,byte))
+    logging.info ("XYZ_DATA_CFG Register before setting Full Scale Mode(%x):%x" % (reg_addr,byte))
     logging.debug("Requested Full Scale mode of operation %x" % mode)
-    # Modify the register to set bits 1 - 0 to the mode
-    towrite = (byte & mask) | mode
-    logging.debug("Byte to write to turn on the Full Scale mode %x" % towrite)
-    bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
-    time.sleep(0.5)
-    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("XYZ_DATA_CFG Register After turning on the Full Scale mode:%x" % byte)
-    if (byte & 0b00000011) == mode:
-        print("Sensor Turned in to Full Scale mode")
+    # check if the bits are not already set
+    if (byte & mask) != mode:
+        # Modify the register to set bits 1 - 0 to the mode
+        towrite = (byte & ~mask) | mode
+        logging.debug("Byte to write to turn on the Full Scale mode %x" % towrite)
+        bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
+        time.sleep(WAITTIME)
+        byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+        logging.info ("XYZ_DATA_CFG Register After turning on the Full Scale mode:%x" % byte)
+        if (byte & mask) == mode:
+            print("Sensor Turned in to Full Scale mode")
+        else:
+            print("Sensor Not in the Full Scale mode")
     else:
-        print("Sensor Not in the Full Scale mode")
+        logging.debug("Sensor already in required Full Scale mode")
     return
 
 def SetSystemMode(mode):
     # Set the System Mode in the SYSMOD Register 0x2A, it can be read from 0x0B
     # mode can be either STANDBY (0b0) or ACTIVE (0b1)
     reg_addr = 0x2A
-    mask = 0b11111110
+    mask = 0b00000001
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("Set System Mode (CTRL_REG1) before setting (%x): %x" % (reg_addr,byte))
     logging.debug("Requested System Mode of operation %x" % mode)
-    # Modify the register to set bit 0 to the mode
-    towrite = (byte & mask) | mode
-    logging.debug("Byte to write to turn on the requested system Mode: %x" % towrite)
-    bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
-    time.sleep(0.5)
-    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("Set System Mode (CTRL_REG1) Register After turning on the required mode: %x" % byte)
-    if (byte & 0b00000001) == mode:
-        print("Sensor Turned in to requested System Mode: %x" % mode)
+    if (byte & mask) != mode:
+        # Modify the register to set bit 0 to the mode
+        towrite = (byte & ~mask) | mode
+        logging.debug("Byte to write to turn on the requested system Mode: %x" % towrite)
+        bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
+        time.sleep(WAITTIME)
+        byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+        logging.info ("Set System Mode (CTRL_REG1) Register After turning on the required mode: %x" % byte)
+        if (byte & mask) == mode:
+            print("Sensor Turned in to requested System Mode: %x" % mode)
+        else:
+            print("Sensor Not in the requested System Mode: %x" % mode)
     else:
-        print("Sensor Not in the requested System Mode: %x" % mode)
+        logging.debug("Set System Mode is already set in the required mode")
     return
 
 def SetSelfTest(onoff):
-    """
-    To activate the self-test by setting the ST bit in the CTRL_REG2 register (0x2B).
-
-    """
+    # To activate the self-test by setting the ST bit in the CTRL_REG2 register (0x2B).
     # Enable the Self Test using CTRL_Register 0x2b
     reg_addr = 0x2b
+    mask = 0b10000000
+    shift = 7
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("Self Test byte before setting Self Test bit (%x):%x" % (reg_addr,byte))
-    # Modify the register to set bit 7 to on or off
-    mask = 0b01111111
-    towrite = (byte & mask) | (onoff << 7)
-    logging.debug("Self Test Byte to write to turn on the Self Test %x" % towrite)
-    bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
-    time.sleep(0.5)
-    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("Self Test After turning on the required mode:%x" % byte)
-
+    if (byte & mask) != (onoff << shift):
+        # Modify the register to set bit 7 to on or off
+        towrite = (byte & ~mask) | (onoff << shift)
+        logging.debug("Self Test Byte to write to turn on the Self Test %x" % towrite)
+        bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
+        time.sleep(WAITTIME)
+        byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+        logging.info ("Self Test After turning on the required mode:%x" % byte)
+        if (byte & mask) == (onoff << shift):
+            print("Sensor Turned in to required Self Test mode")
+        else:
+            print("Sensor Not in the required Self Test mode")
+    else:
+        logging.debug("Sensor already in required Self Test mode")
     return
 
 def SetPulseConfig(mode):
@@ -344,17 +354,20 @@ def SetPulseConfig(mode):
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("Set Pulse Configuration Mode (PULSE_CFG) before setting (%x): %x" % (reg_addr,byte))
     logging.debug("Requested Pulse Configuration Mode of operation %x" % mode)
-    # Modify the register to set bits5 - 0 to the mode
-    towrite = byte | (mask & mode)
-    logging.debug("Byte to write to turn on the requested Pulse Configuration Mode: %x" % towrite)
-    bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
-    time.sleep(0.5)
-    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("Set Pulse COnfiguration Mode (PULSE_CFG) Register After turning on the required mode: %x" % byte)
-    if (byte & mask) == mode:
-        print("Sensor Turned in to requested Pulse Configuration Mode: %x" % mode)
+    if (byte & mask) != mode:
+        # Modify the register to set bits5 - 0 to the mode
+        towrite = (byte & ~mask) | mode
+        logging.debug("Byte to write to turn on the requested Pulse Configuration Mode: %x" % towrite)
+        bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
+        time.sleep(WAITTIME)
+        byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+        logging.info ("Set Pulse Configuration Mode (PULSE_CFG) Register After turning on the required mode: %x" % byte)
+        if (byte & mask) == mode:
+            print("Sensor Turned in to requested Pulse Configuration Mode: %x" % mode)
+        else:
+            print("Sensor Not in the requested Pulse Configuration Mode: %x" % mode)
     else:
-        print("Sensor Not in the requested Pulse Configuration Mode: %x" % mode)
+        logging.debug("Sensor already in required Pulse Configuration mode")
     return
 
 def SetPulseThreshold(axis, value):
@@ -374,81 +387,93 @@ def SetPulseThreshold(axis, value):
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("Set Pulse Threshold %s (PULSE_THSx) before setting (%x): %x" % (axis,reg_addr,byte))
     logging.debug("Requested Pulse Threshold value %x for axis %s" % (value, axis))
-    # Modify the register to set bits6 - 0 to the mode
-    towrite = byte | (mask & value)
-    logging.debug("Byte to write to turn on the requested Pulse Threshold for axis %s Mode: %x" % (axis,towrite))
-    bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
-    time.sleep(0.5)
-    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("Set Pulse Threshold (PULSE_THSx) Register After turning on the required mode: %x for axis %s" % (byte, axis))
-    if (byte & mask) == value:
-        print("Sensor Pulse Threshold set for axis: %s" % axis)
+    if (byte & mask) != value:
+        # Modify the register to set bits6 - 0 to the mode
+        towrite = (byte & ~mask) | value
+        logging.debug("Byte to write to turn on the requested Pulse Threshold for axis %s Mode: %x" % (axis,towrite))
+        bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
+        time.sleep(WAITTIME)
+        byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+        logging.info ("Set Pulse Threshold (PULSE_THSx) Register After turning on the required mode: %x for axis %s" % (byte, axis))
+        if (byte & mask) == value:
+            print("Sensor Pulse Threshold set for axis: %s" % axis)
+        else:
+            print("Sensor Pulse Threshold set for axis: %s" % axis)
     else:
-        print("Sensor Pulse Threshold set for axis: %s" % axis)
+        logging.debug("Sensor Pulse Threshold already set for axis: %s" % axis)
     return
 
 def SetPulseTimeWindow(limit):
     # Set the Pulse Time Limit used for sensing tap detection
     # limit is the value to be written in mS
+    # AS this uses all bits, no need for a mask
     reg_addr = 0x26
-    mask = 0b11111111
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("Set Pulse Time Window (PULSE_TMLT) before setting (%x): %x" % (reg_addr,byte))
     logging.debug("Requested Pulse Time Window in mS %x" % limit)
-    # Modify the register to set bits7 - 0 to the mode
-    towrite = byte | (mask & limit)
-    logging.debug("Byte to write to turn on the requested Pulse Time Window: %x" % towrite)
-    bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
-    time.sleep(0.5)
-    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("Set Pulse Time Window (PULSE_TMLY) Register After turning on the required mode: %x" % byte)
-    if (byte & mask) == limit:
-        print("Sensor set to requested Pulse Time Window: %x" % limit)
+    if byte != limit:
+        # Modify the register to set bits7 - 0 to the mode
+        towrite = limit
+        logging.debug("Byte to write to turn on the requested Pulse Time Window: %x" % towrite)
+        bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
+        time.sleep(WAITTIME)
+        byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+        logging.info ("Set Pulse Time Window (PULSE_TMLY) Register After turning on the required mode: %x" % byte)
+        if byte == limit:
+            print("Sensor set to requested Pulse Time Window: %x" % limit)
+        else:
+            print("Sensor set to requested Pulse Time Window: %x" % limit)
     else:
-        print("Sensor set to requested Pulse Time Window: %x" % limit)
+        logging.debug("Sensor already set to requested Pulse Time Window")
     return
 
 def SetPulseLatency(interval):
     # Set the Pulse Latency Time Limit used for sensing tap detection
     # limit is the value to be written in mS
+    # AS this uses all bits, no need for a mask
     reg_addr = 0x27
-    mask = 0b11111111
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("Set Pulse Latency Time Window (PULSE_TMLT) before setting (%x): %x" % (reg_addr,byte))
     logging.debug("Requested Pulse Latency Time Window in mS %x" % interval)
-    # Modify the register to set bits7 - 0 to the mode
-    towrite = byte | (mask & interval)
-    logging.debug("Byte to write to turn on the requested Pulse Latency Time Window: %x" % towrite)
-    bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
-    time.sleep(0.5)
-    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("Set Pulse Latency Time Window (PULSE_TMLY) Register After turning on the required mode: %x" % byte)
-    if (byte & mask) == interval:
-        print("Sensor set to requested Pulse Latency Time Window: %x" % interval)
+    if byte != interval:
+        # Modify the register to set bits7 - 0 to the mode
+        towrite = interval
+        logging.debug("Byte to write to turn on the requested Pulse Latency Time Window: %x" % towrite)
+        bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
+        time.sleep(WAITTIME)
+        byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+        logging.info ("Set Pulse Latency Time Window (PULSE_TMLY) Register After turning on the required mode: %x" % byte)
+        if byte == interval:
+            print("Sensor set to requested Pulse Latency Time Window: %x" % interval)
+        else:
+            print("Sensor set to requested Pulse Latency Time Window: %x" % interval)
     else:
-        print("Sensor set to requested Pulse Latency Time Window: %x" % interval)
+        logging.debug("Sensor already set to requested Pulse Latency Time Window")
     return
 
 def SetPulseDetection():
     # Set the Ctrl_Reg4 (0x2D) to Pulse Detection
     # no additional value is required as function sets bit 3 on only
     reg_addr = 0x2D
-    mask = 0b11111111
-    value = 0x04
+    mask = 0b00000100
+    value = 0b00000100
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("Set Pulse Detection mode (CTRL_REG4) before setting (%x): %x" % (reg_addr,byte))
     logging.debug("Requested Pulse Detection Mode of operation %x" % value)
-    # Modify the register to set bits5 - 0 to the mode
-    towrite = byte | (mask & value)
-    logging.debug("Byte to write to turn on the requested Pulse Detection Mode: %x" % towrite)
-    bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
-    time.sleep(0.5)
-    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("Set Pulse COnfiguration Detection Mode (CTRL_REG4) Register After turning on the required mode: %x" % byte)
-    if (byte & mask) == value:
-        print("Sensor Turned in to requested Pulse Detection Mode: %x" % value)
+    if (byte & mask) != value:
+        # Modify the register to set bit 3 to 1
+        towrite = (byte & ~mask) | value
+        logging.debug("Byte to write to turn on the requested Pulse Detection Mode: %x" % towrite)
+        bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
+        time.sleep(WAITTIME)
+        byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+        logging.info ("Set Pulse Configuration Detection Mode (CTRL_REG4) Register After turning on the required mode: %x" % byte)
+        if (byte & mask) == value:
+            print("Sensor Turned in to requested Pulse Detection Mode: %x" % value)
+        else:
+            print("Sensor Not in the requested Pulse Detection Mode: %x" % value)
     else:
-        print("Sensor Not in the requested Pulse Detection Mode: %x" % value)
+        logging.debug("Sensor already in the requested Pulse Detection Mode")
     return
 
 def MonitorForTap():
@@ -486,11 +511,13 @@ def MonitorForTap():
 
 def SoftwareReset():
     # Perform a Software Reset using CTRL_Register 0x2b
+    # After the software reset, it automatically clears the bit so no need to check / merge
     reg_addr = 0x0e
+    value = 0b01000000
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("Control Register 2 before enabling Software Reset (%x):%x" % (reg_addr,byte))
     # Modify the register to set bit 6 to 0b1
-    towrite = byte | 0b01000000
+    towrite = byte | value
     logging.debug("Byte to write to perform Software Reset %x" % towrite)
     bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
     time.sleep(0.5)
@@ -503,6 +530,7 @@ def SoftwareReset():
         if in_st == 0b1:
             print("Sensor In Software Reset")
     print ("Software Reset Completed")
+    logging.debug("Software Reset Completed")
     return
 
 def SelfTest():

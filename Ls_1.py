@@ -28,21 +28,6 @@ write_byte_data(address, register, value)
 
 """
 
-
-##
-##
-## This software is ready to test, not yet tested.
-##
-##
-
-
-#BUG: Need to check all uses of bit setting, ORing bytes is great for gsetting bits
-#       but no use for clearing bits!
-#           towrite = (byte & mask) | mode
-
-#TODO: Use reg_addr = 0xxx in all registers
-
-
 import smbus
 import logging
 import time
@@ -50,6 +35,9 @@ import math
 import sys
 
 SENSOR_ADDR = 0x44
+
+# The time between a write and subsequent read
+WAITTIME = 0.5
 
 def ReadAllData():
     # Read out all 255 bytes from the device
@@ -100,13 +88,13 @@ def ReadCommandReg1():
     logging.debug("Operation Mode Bits %s" % omb)
     if omb == 0b000:
         print("Ls.1 Operation Mode: Powered down (Default)")
-    elif ipd == 0b001:
+    elif omb == 0b001:
         print("Ls.1 Operation Mode: Measuring ALS once every integration cycle")
-    elif ipd == 0b010:
+    elif omb == 0b010:
         print("Ls.1 Operation Mode: IR Once")
-    elif ipd == 0b101:
+    elif omb == 0b101:
         print("Ls.1 Operation Mode: Measuring ALS continuously")
-    elif ipd == 0b110:
+    elif omb == 0b110:
         print("Ls.1 Operation Mode: Measuring IR continuously")
     return
 
@@ -144,73 +132,98 @@ def ReadCommandReg2():
 def TurnOffSensor():
     # set bits 5-7 of the Command Register 0x00 to 0
     reg_addr = 0x00
+    mask = 0b11100000
+    shift = 5
+    mode = 0b000
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("Command Register Before turning off (0x00):%x" % byte)
-    # Modify the register to set bits 7 to 5= 0 000
-    towrite = byte & 0b00011111
-    logging.debug("Byte to write to turn off %s" % towrite)
-    bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
-    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("Command Register After turning off (0x00):%x" % byte)
-    if (byte & 0b1110) >> 5 > 1:
-        print("Sensor Turned on")
+    if (byte & mask) != (mode << shift):
+        # Modify the register to set bits 7 to 5= 0b000
+        towrite = (byte & ~mask) | (mode << shift)
+        logging.debug("Byte to write to turn off %s" % towrite)
+        bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
+        time.sleep(WAITTIME)
+        byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+        logging.info ("Command Register After turning off (0x00):%x" % byte)
+        if (byte & mask) == (mode << shift):
+            print("Sensor Turned on")
+        else:
+            print("Sensor Turned off")
     else:
-        print("Sensor Turned off")
+        logging.debug("Sensor already Turned on")
     return
 
 def SensorALSMode():
     # set bits 5-7 of the Command Register 0x00 to 0b101
     # Sensor will be in ALS mode
     reg_addr = 0x00
+    mask = 0b11100000
+    shift = 5
+    mode = 0b101
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("Command Register Before turning onALS mode (0x00):%x" % byte)
-    # Modify the register to set bits 7 to 5 = 101
-    towrite = byte | 0b10100000
-    logging.debug("Byte to write to turn on ALS mode %x" % towrite)
-    bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
-    time.sleep(0.5)
-    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("Command Register After turning on ALS mode (0x00):%x" % byte)
-    if (byte & 0b11100000) >> 5 == 0b101:
-        print("Sensor Turned on in ALS mode")
+    logging.info ("Command Register Before turning on ALS mode (0x00):%x" % byte)
+    if (byte & mask) != (mode << shift):
+        # Modify the register to set bits 7 to 5 = 0b101
+        towrite = (byte & ~mask) | (mode << shift)
+        logging.debug("Byte to write to turn on ALS mode %x" % towrite)
+        bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
+        time.sleep(WAITTIME)
+        byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+        logging.info ("Command Register After turning on ALS mode (0x00):%x" % byte)
+        if (byte & mask) == (mode << shift):
+            print("Sensor Turned on in ALS mode")
+        else:
+            print("Sensor Not in ALS mode")
     else:
-        print("Sensor Not in ALS mode")
+        logging.debug("Sensor Turned on in ALS mode")
     return
 
 def SensorIRMode():
     # set bits 5-7 of the Command Register 0x00 to 0b110
     # Sensor will be IR mode
     reg_addr = 0x00
+    mask = 0b11100000
+    shift = 5
+    mode = 0b110
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("Command Register Before turning on IR mode (0x00):%x" % byte)
-    # Modify the register to set bits 7 to 5 = 110
-    towrite = byte | 0b11000000
-    logging.debug("Byte to write to turn on ALS mode %x" % towrite)
-    bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
-    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("Command Register After turning on ALS mode (0x00):%x" % byte)
-    if (byte & 0b11100000) >> 5 == 0b110:
-        print("Sensor Turned on in IR mode")
+    if (byte & mask) != (mode << shift):
+        # Modify the register to set bits 7 to 5 = 110
+        towrite = (byte & ~mask) | (mode << shift)
+        logging.debug("Byte to write to turn on ALS mode %x" % towrite)
+        bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
+        time.sleep(WAITTIME)
+        byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+        logging.info ("Command Register After turning on ALS mode (0x00):%x" % byte)
+        if (byte & mask) == (mode << shift):
+            print("Sensor Turned on in IR mode")
+        else:
+            print("Sensor Not in IR mode")
     else:
-        print("Sensor Not in IR mode")
+        logging.debug("Sensor Turned on in IR mode")
     return
 
 def SensorRangeResolution():
     # sets the various command register 2 bits for reading values
     reg_addr = 0x01
+    mask = 0b00001111
+    value = 0b1100
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("Command Register before setting measurement ranges (0x01):%x" % byte)
-    # Modify the register to set bits 3 & 2 to 0b11, bits 1 & 0 to 0b00
-    towrite = byte | 0b00001100
-    logging.debug("Byte to write to set measurement ranges %x" % towrite)
-    bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
-    byte = 0xff
-    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("Command Register After setting measurement ranges (0x01):%x" % byte)
-    if (byte & 0b00001100) == 0b1100:
-        print("Sensor Registers sets")
+    logging.info ("Range Resolution Register before setting measurement ranges (0x01):%x" % byte)
+    if (byte & mask) != value:
+        # Modify the register to set bits 3 & 2 to 0b11, bits 1 & 0 to 0b00
+        towrite = (byte & ~mask) | value
+        logging.debug("Byte to write to set measurement ranges %x" % towrite)
+        bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
+        time.sleep(WAITTIME)
+        byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+        logging.info ("Range Resolution Register After setting measurement ranges (0x01):%x" % byte)
+        if (byte & mask) == value:
+            print("Sensor Range ResolutionRegisters sets")
+        else:
+            print("Sensor Range ResolutionRegisters not set")
     else:
-        print("Sensor Registers not set")
+        logging.debug("Sensor Range Resolution alreay set")
     return
 
 
@@ -230,10 +243,11 @@ def ReadDataRegisters():
 def ADCDataResolution():
     # Return the values of the ADC resolution
     reg_addr = 0x01
+    mask = 0b00001100
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("ADC Data Resolution reading (bits 2 & 3 of 0x01):%x" % byte)
     # Decode the values
-    adc = (byte & 0b00001100) >> 2
+    adc = (byte & mask) >> 2
     logging.debug("ADC Resolution Bit %s" % adc)
     resolution = 00
     if adc == 0b00:
@@ -263,11 +277,12 @@ def FullScaleRange(mode):
 
     # retrieve data ad decode
     reg_addr = 0x01
+    mask = 0b00000011
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("Full Scale Range reading:%x" % byte)
 
     # Full Scale Range bits
-    fcr = (byte & 0b00000011)
+    fcr = (byte & mask)
     logging.debug("Full Scale Range Selection %s" % fcr)
     fullscalerange = 0
     if fcr == 0b00:

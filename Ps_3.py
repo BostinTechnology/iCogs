@@ -63,6 +63,20 @@ SENSOR_ADDR = 0x60
 STANDBY = 0b0
 ACTIVE = 0b1
 
+def SetRepeatedStartMode():
+    # This function sets the I2C bus to use Repeated Start Mode
+    # Command to run as Superuser is
+    #   echo -n 1 > /sys/module/i2c_bcm2708/parameters/combined
+    logging.info("Setting Repeated Start for I2C comms")
+    try:
+        response = subprocess.call(["echo -n 1 > /sys/module/i2c_bcm2708/parameters/combined"], shell=True)
+        logging.debug("Used subprocess call to set Repeated Start command and got this response %x" % response)
+    except:
+        logging.critical("Failed to Set Repeated Start mode, program aborted with response %s" % response)
+        print("Failed to Set Repeated Start mode, program aborted")
+        sys.exit()
+
+
 def ReadAllData():
     # Read out all 255 bytes from the device
     # capture all the readings for printing later
@@ -402,6 +416,8 @@ print ("Press h for help")
 print ("")
 
 bus = smbus.SMBus(1)
+
+SetRepeatedStartMode()
 
 logging.basicConfig(filename="Ps_3.txt", filemode="w", level=logging.DEBUG, format='%(asctime)s:%(levelname)s:%(message)s')
 

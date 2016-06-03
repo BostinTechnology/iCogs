@@ -35,14 +35,10 @@ import time
 import math
 import sys
 
-#BUG: Need to check all uses of bit setting, ORing bytes is great for gsetting bits
-#       but no use for clearing bits!
-#       towrite = (byte & mask) | mode
-
-#TODO: Use reg_addr = 0xxx in all registers
-
-
 SENSOR_ADDR = 0x5f
+
+# The time between a write and subsequent read
+WAITTIME = 0.5
 
 def TwosCompliment(value):
     # Convert the given 16bit hex value to decimal using 2's compliment
@@ -68,7 +64,8 @@ def ReadAllData():
 
 def WhoAmI():
     # Read out and confirm the 'Who Am I' value of 0xBC
-    byte = bus.read_byte_data(SENSOR_ADDR,0x0F)
+    reg_addr = 0x0F
+    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     if byte == 0xBC:
         print("Identified as Correct Device :%x" % byte)
     else:
@@ -78,7 +75,8 @@ def WhoAmI():
 
 def ReadAV_Conf():
     #Read out and decode the humidty and temperature resolution mode
-    byte = bus.read_byte_data(SENSOR_ADDR,0x10)
+    reg_addr = 0x10
+    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.debug ("AV_Conf setting (0x10):%x" % byte)
     # Decode the values
     # Temperature is bits 5:3
@@ -88,6 +86,7 @@ def ReadAV_Conf():
     temp_samp = math.pow(2, (temp_avg + 1))
     logging.info("Quantity of Temperature Samples :%d" % temp_samp)
     print ("Quantity of Temperature Samples :%d" % temp_samp)
+
     # Humidity is bits 2:0
     humid_avg = (byte & 0b00000111)
     logging.debug("Bits read for averaged humidity samples %s" % humid_avg)
@@ -99,7 +98,8 @@ def ReadAV_Conf():
 
 def ReadCtrl_Reg1():
     #Read out and decode the first control register
-    byte = bus.read_byte_data(SENSOR_ADDR,0x20)
+    reg_addr = 0x20
+    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("Control Register 1 setting (0x20):%x" % byte)
     # Decode the values
     # Power Down Control
@@ -131,11 +131,11 @@ def ReadCtrl_Reg1():
         print("Ts.1 Output Data Rate Configuration: 12.5 Hz")
     return
 
-
 def ReadCtrl_Reg2():
     #Read out and decode the second control register.
     # Most values are for control, hence not decoded
-    byte = bus.read_byte_data(SENSOR_ADDR,0x21)
+    reg_addr = 0x21
+    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("Control Register 2 setting (0x21):%x" % byte)
 
     # Heater Status
@@ -149,13 +149,15 @@ def ReadCtrl_Reg2():
 
 def ReadCtrl_Reg3():
     #Read out the third control register
-    byte = bus.read_byte_data(SENSOR_ADDR,0x22)
+    reg_addr = 0x22
+    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("Control Register 3 setting (0x22):%x" % byte)
     return
 
 def ReadStatus_Reg():
     #Read out and decode the status register
-    byte = bus.read_byte_data(SENSOR_ADDR,0x27)
+    reg_addr = 0x27
+    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("Status Register setting (0x27):0x%x" % byte)
     # Decode the Values
 
@@ -166,6 +168,7 @@ def ReadStatus_Reg():
         print("Ts.1 Humidity data available")
     else:
         print("Ts.1 Humidity data NOT available")
+
     # Temperature Data Status
     temp = byte & 0b00000001
     logging.debug("Temperature Data Status (1=data available) %s" % temp)
@@ -178,71 +181,89 @@ def ReadStatus_Reg():
 
 ### Routines to control the sensor
 def TurnOnSensor():
-    # set bit 7 of the CTRL Register 0x20 to 1
-    byte = bus.read_byte_data(SENSOR_ADDR,0x20)
+    # set bit 7 of the CTRL Register 0x20 to 1 and bits 1 & 0 to 0b 01
+    reg_addr = 0x20
+    mask = 0b10000011
+    mode = 0b10000001
+    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("Control Register Before turning on Sensor (0x20):0x%x" % byte)
-    #Modify the register to set bit7 = 1 and bits1,0 to 01
-    towrite = byte | 0x80 | 0x01
-    logging.debug("Byte to write to turn on Sensor 0x%x" % towrite)
-    bus.write_byte_data(SENSOR_ADDR, 0x20, towrite)
-    byte = bus.read_byte_data(SENSOR_ADDR,0x20)
-    logging.info ("Control Register After turning on sensor(0x20):0x%x" % byte)
-    if (byte & 0b10000000) >> 7 == 1:
-        print("Sensor Turned on")
+    if (byte & mask) != mode:
+        #Modify the register to set bit7 = 1 and bits1,0 to 01
+        towrite = (byte & ~mask) | mode
+        logging.debug("Byte to write to turn on Sensor 0x%x" % towrite)
+        bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
+        time.sleep(WAITTIME)
+        byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+        logging.info ("Control Register After turning on sensor(0x20):0x%x" % byte)
+        if (byte & mask) == mode:
+            print("Sensor Turned on")
+        else:
+            print("Sensor Turned off")
     else:
-        print("Sensor Turned off")
+        logging.debug("Sensor already Turned on")
     return
 
 def TurnOffSensor():
-    # set bit 7 of the CTRL Register 0x20 to 0
-    byte = bus.read_byte_data(SENSOR_ADDR,0x20)
+    # set bit 7 of the CTRL Register 0x20 to 0 and bits 1 & 0 to 0b00
+    reg_addr = 0x20
+    mask = 0b10000011
+    mode = 0b00000000
+    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("Control Register Before turning off (0x20):%x" % byte)
-    # Modify the register to set bit7 = 0 and bits1,0 to 00
-    towrite = byte & 0b01111100
-    logging.debug("Byte to write to turn off %s" % towrite)
-    bus.write_byte_data(SENSOR_ADDR, 0x20, towrite)
-    byte = bus.read_byte_data(SENSOR_ADDR,0x20)
-    logging.info ("Control Register After turning off (0x20):%x" % byte)
-    if (byte & 0b10000000) >> 7 == 1:
-        print("Sensor Turned on")
+    if (byte & mask) != mode:
+        # Modify the register to set bit7 = 0 and bits1,0 to 00
+        towrite = (byte & ~mask) | mode
+        logging.debug("Byte to write to turn off %s" % towrite)
+        bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
+        time.sleep(WAITTIME)
+        byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+        logging.info ("Control Register After turning off (0x20):%x" % byte)
+        if (byte & mask) == mode:
+            print("Sensor Turned on")
+        else:
+            print("Sensor Turned off")
     else:
-        print("Sensor Turned off")
-
+        logging.debug("Sensor already Turned off")
     return
 
-
 def TurnOnHeater():
-    # Turn on the heater for 1 second
-    byte = bus.read_byte_data(SENSOR_ADDR,0x21)
+    # Turn on the heater for 1 second, setting bit 1 = 1 for On
+    reg_addr = 0x21
+    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("Control Register Before turning on heater (0x21):%x" % byte)
-    # Modify the register to set bit1 = 1
-    to_on = (byte | 0b00000010)
-    to_off = (byte & 0b11111101)
+    # Set the On and Off values
+    to_on = (byte | 0b00000010)     # sets bit 1 = 1
+    to_off = (byte & 0b11111101)    # sets bit 1 = 0
     logging.debug("Byte to write to turn off / on 0x%2x / 0x%2x" % (to_on, to_off))
     # turn on the heater
-    bus.write_byte_data(SENSOR_ADDR, 0x21, to_on)
+    bus.write_byte_data(SENSOR_ADDR, reg_addr, to_on)
     logging.info("Heater turned ON")
     print("Heater ON")
     time.sleep(1)
     # turn off the heater
-    bus.write_byte_data(SENSOR_ADDR, 0x21, to_off)
+    bus.write_byte_data(SENSOR_ADDR, reg_addr, to_off)
     logging.info("Heater turned OFF")
     print ("Heater OFF")
     return
 
 def RefreshRegisters():
     # set bit 7 of the CTRL Register 0x21 to 1 to reset the registers
-    byte = bus.read_byte_data(SENSOR_ADDR,0x21)
+    # This bit automatically clears once the registers have been refreshed
+    reg_addr = 0x21
+    mask = 0b10000000
+    shift = 7
+    mode = 0b1
+    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.info ("Control Register Before Refreshing data (0x21):%x" % byte)
     # Modify the register to set bit7 = 1
-    towrite = byte | 0b10000000
+    towrite = byte | (mode << shift)
     logging.debug("Byte to write to refresh the register %x" % towrite)
-    bus.write_byte_data(SENSOR_ADDR, 0x21, towrite)
+    bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
     # check bit 7 for return to zero on completion of refresh
     refreshing = True
     while refreshing:
-        byte = bus.read_byte_data(SENSOR_ADDR,0x21)
-        refreshing = (byte & 0b10000000) >> 7
+        byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+        refreshing = (byte & mask) >> 7
         logging.debug("Waiting for Refresh %x" % byte)
     logging.info ("Control Register After refreshing the register (0x20):%x" % byte)
     print("Registers Refeshed")
@@ -250,19 +271,23 @@ def RefreshRegisters():
 
 def HumidityDataAvailable():
     # Waits until the Humidity data available flag is set
+    reg_addr = 0x27
+    mask = 0b00000010
     humid = False
     while humid == False:
-        byte = bus.read_byte_data(SENSOR_ADDR,0x27)
-        humid = (byte & 0b00000010) >> 1
+        byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+        humid = (byte & mask) >> 1
         logging.debug("Humidity Data Status (1=data available) %s" % humid)
     return
 
 def TemperatureDataAvailable():
     # Waits until the Temperature data available flag is set
+    reg_addr = 0x27
+    mask = 0b00000001
     temp = False
     while temp == False:
-        byte = bus.read_byte_data(SENSOR_ADDR,0x27)
-        temp = byte & 0b00000001
+        byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+        temp = byte & mask
         logging.debug("Temperature Data Status (1=data available) %s" % temp)
     return
 
@@ -270,8 +295,9 @@ def TemperatureDataAvailable():
 
 def ReadT_OUT():
     #Read out and decode the 2 bytes of temperature readings
-    t_out_l = bus.read_byte_data(SENSOR_ADDR,0x2a)
-    t_out_h = bus.read_byte_data(SENSOR_ADDR,0x2b)
+    t_out_addr = [0x2a, 0x2b]
+    t_out_l = bus.read_byte_data(SENSOR_ADDR,t_out_addr[0])
+    t_out_h = bus.read_byte_data(SENSOR_ADDR,t_out_addr[1])
     logging.debug ("T_OUT Reading (0x2b/0x2a):%x/%x" % (t_out_h, t_out_l))
     #Merge the values into a single reading
     t_out = (t_out_h << 8) + t_out_l
@@ -281,8 +307,9 @@ def ReadT_OUT():
 
 def ReadT0_DegC():
     #Read out and decode the 1.2 bytes of temperature calibraion reading T0
-    t0_degc_l = bus.read_byte_data(SENSOR_ADDR,0x32)
-    t0_degc_h = bus.read_byte_data(SENSOR_ADDR,0x35)
+    t0_reg_addr = [0x32, 0x35]
+    t0_degc_l = bus.read_byte_data(SENSOR_ADDR,t0_reg_addr[0])
+    t0_degc_h = bus.read_byte_data(SENSOR_ADDR,t0_reg_addr[1])
     logging.debug ("T0 Calibration Readings (0x35/0x32):%x/%x" % (t0_degc_h, t0_degc_l))
     #Merge the values into a single reading
     #extract 2 bits from T0 high
@@ -293,9 +320,10 @@ def ReadT0_DegC():
     return t0_degc
 
 def ReadT1_DegC():
-    #Read out and decode the 1.2 bytes of temperature calibraion reading T0
-    t1_degc_l = bus.read_byte_data(SENSOR_ADDR,0x33)
-    t1_degc_h = bus.read_byte_data(SENSOR_ADDR,0x35)
+    #Read out and decode the 1.2 bytes of temperature calibraion reading T1
+    t1_reg_addr = [0x33, 0x35]
+    t1_degc_l = bus.read_byte_data(SENSOR_ADDR,t1_reg_addr[0])
+    t1_degc_h = bus.read_byte_data(SENSOR_ADDR,t1_reg_addr[1])
     logging.debug ("T1 Calibration Readings (0x35/0x33):%x/%x" % (t1_degc_h, t1_degc_l))
     #Merge the values into a single reading
     #extract 2 bits from T0 high
@@ -307,8 +335,9 @@ def ReadT1_DegC():
 
 def ReadT0_OUT():
     #Read out and decode the 2 bytes of temperature calibration readings
-    t0_out_l = bus.read_byte_data(SENSOR_ADDR,0x3c)
-    t0_out_h = bus.read_byte_data(SENSOR_ADDR,0x3d)
+    t0_out_reg_addr = [0x3c, 0x3d]
+    t0_out_l = bus.read_byte_data(SENSOR_ADDR,t0_out_reg_addr[0])
+    t0_out_h = bus.read_byte_data(SENSOR_ADDR,t0_out_reg_addr[1])
     logging.debug ("T0 OUT Reading (0x3c/0x3d):%x/%x" % (t0_out_h, t0_out_l))
     #Merge the values into a single reading
     t0_out = (t0_out_h << 8) + t0_out_l
@@ -318,8 +347,9 @@ def ReadT0_OUT():
 
 def ReadT1_OUT():
     #Read out and decode the 2 bytes of temperature calibration readings
-    t1_out_l = bus.read_byte_data(SENSOR_ADDR,0x3e)
-    t1_out_h = bus.read_byte_data(SENSOR_ADDR,0x3f)
+    t1_out_reg_addr = [0x3e, 0x3f]
+    t1_out_l = bus.read_byte_data(SENSOR_ADDR,t1_out_reg_addr[0])
+    t1_out_h = bus.read_byte_data(SENSOR_ADDR,t1_out_reg_addr[1])
     logging.debug ("T1_OUT Reading (0x3e/0x3f):%x/%x" % (t1_out_h, t1_out_l))
     #Merge the values into a single reading
     t1_out = (t1_out_h << 8) + t1_out_l
@@ -341,8 +371,9 @@ def CalculateTemperature():
 ### Routines to read out the various humidity values and calculate the current temperature
 def ReadH_OUT():
     #Read out and decode the 2 bytes of humidity readings
-    h_out_l = bus.read_byte_data(SENSOR_ADDR,0x28)
-    h_out_h = bus.read_byte_data(SENSOR_ADDR,0x29)
+    h_out_reg_addr = [0x28, 0x29]
+    h_out_l = bus.read_byte_data(SENSOR_ADDR,h_out_reg_addr[0])
+    h_out_h = bus.read_byte_data(SENSOR_ADDR,h_out_reg_addr[1])
     logging.debug ("H_OUT Reading (0x28/0x29):%x/%x" % (h_out_h, h_out_l))
     #Merge the values into a single reading
     h_out = (h_out_h << 8) + h_out_l
@@ -352,7 +383,8 @@ def ReadH_OUT():
 
 def ReadH0_rH():
     #Read out and decode the 1 byte of humidity calibraion reading H0
-    h0_rh = bus.read_byte_data(SENSOR_ADDR,0x30)
+    reg_addr = 0x30
+    h0_rh = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.debug ("H0 Calibration Readings (0x30):%x" % h0_rh)
     h0_rh = h0_rh / 2
     logging.info("H0 Value:%s" % h0_rh)
@@ -360,7 +392,8 @@ def ReadH0_rH():
 
 def ReadH1_rH():
     #Read out and decode the 1 byte of humidity calibraion reading H1
-    h1_rh = bus.read_byte_data(SENSOR_ADDR,0x31)
+    reg_addr = 0x31
+    h1_rh = bus.read_byte_data(SENSOR_ADDR,reg_addr)
     logging.debug ("H1 Calibration Readings (0x30):%x" % h1_rh)
     h1_rh = h1_rh / 2
     logging.info("H1 Value:%s" % h1_rh)
@@ -368,8 +401,9 @@ def ReadH1_rH():
 
 def ReadH0_OUT():
     #Read out and decode the 2 bytes of humidity calibration readings
-    h0_out_l = bus.read_byte_data(SENSOR_ADDR,0x36)
-    h0_out_h = bus.read_byte_data(SENSOR_ADDR,0x37)
+    h0_out_reg_addr = [0x36, 0x37]
+    h0_out_l = bus.read_byte_data(SENSOR_ADDR,h0_out_reg_addr[0])
+    h0_out_h = bus.read_byte_data(SENSOR_ADDR,h0_out_reg_addr[1])
     logging.debug ("H0 OUT Reading (0x37/0x36):%x/%x" % (h0_out_h, h0_out_l))
     #Merge the values into a single reading
     h0_out = (h0_out_h << 8) + h0_out_l
@@ -379,8 +413,9 @@ def ReadH0_OUT():
 
 def ReadH1_OUT():
     #Read out and decode the 2 bytes of humidity calibration readings
-    h1_out_l = bus.read_byte_data(SENSOR_ADDR,0x3A)
-    h1_out_h = bus.read_byte_data(SENSOR_ADDR,0x3B)
+    h0_out_reg_addr = [0x3a, 0x3b]
+    h1_out_l = bus.read_byte_data(SENSOR_ADDR,h0_out_reg_addr[0])
+    h1_out_h = bus.read_byte_data(SENSOR_ADDR,h0_out_reg_addr[1])
     logging.debug ("H1 OUT Reading (0x3B/0x3A):%x/%x" % (h1_out_h, h1_out_l))
     #Merge the values into a single reading
     h1_out = (h1_out_h << 8) + h1_out_l
