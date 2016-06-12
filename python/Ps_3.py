@@ -50,18 +50,34 @@ write_byte_data(address, register, value)
 
 #TODO: Use reg_addr = 0xxx in all registers
 
+# Functions to implement
+# Min / Max values
+# read and decode registers
+
 
 import smbus
 import logging
 import time
 import math
 import sys
+import subprocess
 
 SENSOR_ADDR = 0x60
+
+# The time between a write and subsequent read
+WAITTIME = 0.5
 
 #Sensor Modes
 STANDBY = 0b0
 ACTIVE = 0b1
+
+#Output Modes
+NORMAL = 0b0
+RAW = 0b01000000
+
+#Altimeter Modes
+ALTIMETER = 0b10000000
+BAROMETER = 0b00000000
 
 def SetRepeatedStartMode():
     # This function sets the I2C bus to use Repeated Start Mode
@@ -72,7 +88,8 @@ def SetRepeatedStartMode():
         response = subprocess.call(["echo -n 1 > /sys/module/i2c_bcm2708/parameters/combined"], shell=True)
         logging.debug("Used subprocess call to set Repeated Start command and got this response %x" % response)
     except:
-        logging.critical("Failed to Set Repeated Start mode, program aborted with response %s" % response)
+        e = sys.exc_info()
+        logging.critical("Failed to Set Repeated Start mode, program aborted with response %s: %s" % (e[0], e[1]))
         print("Failed to Set Repeated Start mode, program aborted")
         sys.exit()
 
@@ -105,207 +122,39 @@ def WhoAmI():
     logging.info ("Who Am I - Address 0x0C (0xC4):%s" % byte)
     return
 
-#####################################################
-###
-### NONE of these commands has been tested and done anything with
-###
-#####################################################
-
-
-def ReadF_Setup():
-    #Read out and decode the F_Setup Register 0x09
-    reg_addr = 0x09
-    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("F_Setup Register reading (%x):%x" % (reg_addr,byte))
-    # Decode the values
-    # FIFO Buffer Overflow mode
-    fbom = (byte & 0b11000000) >> 6
-    logging.debug("FIFO Buffer Overflow bits %s" % fbom)
-    if fbom == 0b00:
-        print("Rs.2 FIFO is disabled")
-    elif fbom == 0b01:
-        print("Rs.2 FIFO contains the most recent samples when overflowed")
-    elif fbom == 0b10:
-        print("Rs.2 FIFO stops accepting new samples when overflowed")
-    elif fbom == 0b11:
-        print("Rs.2 FIFO is in Trigger mode")
-    # FIFO Event Sample Count Watermark
-    fescw = (byte & 0b00111111)
-    logging.debug("FIFO Event Sample Count Watermark %s" % fescw)
-    print ("FIFO Event Sample Count Watermark %s" % fescw)
-    return
-
-def ReadSystemMode():
-    #Read out and decode the SYSMOD Register 0x0B
-    reg_addr = 0x0B
-    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("SYSMOD Register reading (%x):%x" % (reg_addr,byte))
-    # Decode the values
-    # FIFO Gate Error flag
-    fge = (byte & 0b10000000) >> 7
-    logging.debug("FIFO Gate Error Flag %s" % fge)
-    if fge == 0b1:
-        print("Rs.2 FIFO Gate Error has been detected")
-    else:
-        print("Rs.2 FIFO Gate Error has NOT been detected")
-    # Number of ODR time units since FIFO Gate Error
-    fgerr = (byte & 0b01111100)
-    logging.debug("Number of ODR time units since FIFO Gate Error %s" % fgerr)
-    print ("Number of ODR time units since FIFO Gate Error %s" % fgerr)
-    # System Mode
-    sysmod = (byte & 0b00000011)
-    logging.debug("System Modebits %s" % sysmod)
-    if sysmod == 0b00:
-        print("Rs.2 In Standby Mode")
-    elif sysmod == 0b01:
-        print("Rs.2 In Wake Mode")
-    elif sysmod == 0b10:
-        print("Rs.2 In Sleep Mode")
-    return
-
 def SetSystemMode(mode):
-    #Set the System Mode in the SYSMOD Register 0x0B
-    # mode can be either STANDBY, WAKE, SLEEP
-    reg_addr = 0x0B
+    #Set the System Mode in the System Mode Register 0x11
+    # mode can be either STANDBY (0b0) or ACTIVE (0b1)
+    reg_addr = 0x26
+    mask = 0b00000001
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("SYSMOD Register before setting (%x):%x" % (reg_addr,byte))
-    logging.debug("Requested mode of operation %x" % mode)
-    # Modify the register to set bits 1 - 0 to the mode
-    towrite = byte | mode
-    logging.debug("Byte to write to turn on the reqeusted mode %x" % towrite)
-    bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
-    time.sleep(0.5)
-    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("SYSMOD Register After turning on the required mode:%x" % byte)
-    if (byte & 0b00000011) == mode:
-        print("Sensor Turned in to requested mode")
-    else:
-        print("Sensor Not in the requested mode")
-    return
-
-def ReadXYZ_Data_Cfg():
-    #Read out and decode the XYZ_DATA_CFG Register 0x0E
-    reg_addr = 0x0E
-    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("XYZ_DATA_CFG Register reading (%x):%x" % (reg_addr,byte))
-    # Decode the values
-    # High Pass Filter Out setting
-    hpf = (byte & 0b00010000) >> 4
-    logging.debug("High Pass Filter Out Flag %s" % hpf)
-    if hpf == 0b1:
-        print("Rs.2 High Pass Filter Output Enabled")
-    else:
-        print("Rs.2 Output data is NOT High Pass Filtered")
-    # Full Scale Range setting
-    fsr = (byte & 0b00000011)
-    logging.debug("Full Scale Range setting %s" % fsr)
-    if fsr == 0b00:
-        print("Rs.2 Full Scale Range : +/- 2g")
-    elif fsr == 0b01:
-        print("Rs.2 Full Scale Range : +/- 4g")
-    elif fsr == 0b10:
-        print("Rs.2 Full Scale Range : +/- 8g")
-    return
-
-def SetFullScaleMode(mode):
-    #Set the Full Scale Mode in the XYZ_DATA_CFG Register 0x0E
-    # mode can be either TWOG, FOURG, EIGHTG
-    reg_addr = 0x0e
-    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("XYZ_DATA_CFG Register before setting (%x):%x" % (reg_addr,byte))
-    logging.debug("Requested Full Scale mode of operation %x" % mode)
-    # Modify the register to set bits 1 - 0 to the mode
-    towrite = byte | mode
-    logging.debug("Byte to write to turn on the Full Scale mode %x" % towrite)
-    bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
-    time.sleep(0.5)
-    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("XYZ_DATA_CFG Register After turning on the Full Scale mode:%x" % byte)
-    if (byte & 0b00000011) == mode:
-        print("Sensor Turned in to Full Scale mode")
-    else:
-        print("Sensor Not in the Full Scale mode")
-    return
-
-def ReadControlRegister2():
-    #Read out and decode Control Register 2 0x2b
-    reg_addr = 0x2B
-    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("Control Register 2 reading (%x):%x" % (reg_addr,byte))
-    # Decode the values
-    # Self Test Enabled
-    ste = (byte & 0b10000000) >> 7
-    logging.debug("Self Test  Flag %s" % ste)
-    if ste == 0b1:
-        print("Rs.2 Self Test is Enabled")
-    else:
-        print("Rs.2 Self Test is Disabled")
-    # Software Reset
-    sr = (byte & 0b01000000) >> 6
-    logging.debug("Self Test  Flag %s" % sr)
-    if sr == 0b1:
-        print("Rs.2 Software Reset  is Enabled")
-    else:
-        print("Rs.2 Software Reset is Disabled")
-    # Sleep Mode power Scheme
-    smps = (byte & 0b00011000)
-    logging.debug("Sleep Mode Power Scheme bits %s" % smps)
-    if smps == 0b00:
-        print("Rs.2 Sleep Mode Power Mode: Normal")
-    elif smps == 0b01:
-        print("Rs.2 Sleep Mode Power Mode: Low Noise Low Power")
-    elif smps == 0b10:
-        print("Rs.2 Sleep Mode Power Mode: High Resolution")
-    elif smps == 0b11:
-        print("Rs.2 Sleep Mode Power Mode: Low Power")
-    # Auto Sleep Mode flag
-    sr = (byte & 0b00000100) >> 2
-    logging.debug("Auto Sleep Mode Flag %s" % sr)
-    if sr == 0b1:
-        print("Rs.2 Auto Sleep Mode Flag is Enabled")
-    else:
-        print("Rs.2 Auto Sleep Mode Flag is Disabled")
-    # Active Mode power Scheme
-    amps = (byte & 0b00011000)
-    logging.debug("Active Mode Power Scheme bits %s" % amps)
-    if amps == 0b00:
-        print("Rs.2 Active Mode Power Mode: Normal")
-    elif amps == 0b01:
-        print("Rs.2 Active Mode Power Mode: Low Noise Low Power")
-    elif amps == 0b10:
-        print("Rs.2 Active Mode Power Mode: High Resolution")
-    elif amps == 0b11:
-        print("Rs.2 Active Mode Power Mode: Low Power")
-    return
-
-def EnableSelfTest():
-    # Enable the Self Test using CTRL_Register 0x2b
-    reg_addr = 0x0e
-    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("Control Register 2 before enabling Self Test (%x):%x" % (reg_addr,byte))
-    # Modify the register to set bit 7 to 0b1
-    towrite = byte | 0b10000000
-    logging.debug("Byte to write to turn on the Self Test %x" % towrite)
-    bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
-    time.sleep(0.5)
-    in_st = 1
-    while in_st:
-        # Wait while the self test runs
+    logging.info ("Set System Mode (CTRL_REG1) before setting (%x): %x" % (reg_addr,byte))
+    logging.debug("Requested System Mode of operation %x" % mode)
+    if (byte & mask) != mode:
+        # Modify the register to set bit 0 to the mode
+        towrite = (byte & ~mask) | mode
+        logging.debug("Byte to write to turn on the requested system Mode: %x" % towrite)
+        bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
+        time.sleep(WAITTIME)
         byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-        logging.info ("Control Register 2 After turning on the Self Test:%x" % byte)
-        in_st = (byte & 0b10000000) >> 7
-        if in_st == 0b1:
-            print("Sensor In Self Test")
-    print ("Self Test Completed")
+        logging.info ("Set System Mode (CTRL_REG1) Register After turning on the required mode: %x" % byte)
+        if (byte & mask) == mode:
+            print("Sensor Turned in to requested System Mode: %x" % mode)
+        else:
+            print("Sensor Not in the requested System Mode: %x" % mode)
+    else:
+        logging.debug("Set System Mode is already set in the required mode")
     return
 
 def SoftwareReset():
-    # Perform a Software Reset using CTRL_Register 0x2b
-    reg_addr = 0x0e
+    # Perform a Software Reset using CTRL_Register 0x26
+    # After the software reset, it automatically clears the bit so no need to check / merge
+    reg_addr = 0x26
+    value = 0b00000100
     byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("Control Register 2 before enabling Software Reset (%x):%x" % (reg_addr,byte))
-    # Modify the register to set bit 6 to 0b1
-    towrite = byte | 0b01000000
+    logging.info ("Control Register 1 before enabling Software Reset (%x):%x" % (reg_addr,byte))
+    # Modify the register to set bit 2 to 0b1
+    towrite = byte | value
     logging.debug("Byte to write to perform Software Reset %x" % towrite)
     bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
     time.sleep(0.5)
@@ -313,95 +162,352 @@ def SoftwareReset():
     while in_st:
         # Wait while the Software Reset runs
         byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-        logging.info ("Control Register 2 After enabling Software Reset:%x" % byte)
-        in_st = (byte & 0b01000000) >> 6
+        logging.info ("Control Register 1 After enabling Software Reset:%x" % byte)
+        in_st = (byte & value) >> 2
         if in_st == 0b1:
             print("Sensor In Software Reset")
     print ("Software Reset Completed")
+    logging.debug("Software Reset Completed")
+    return
+
+def SetOutputMode(mode):
+    #Set the output mode in the CTRL_REG1 Register 0x26
+    # mode can be either NORMAL or RAW
+    reg_addr = 0x26
+    mask = 0b01000000
+    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+    logging.info ("Set Output Mode (CTRL_REG1) before setting (%x): %x" % (reg_addr,byte))
+    logging.debug("Requested Output Mode of operation %x" % mode)
+    if (byte & mask) != mode:
+        # Modify the register to set bit 0 to the mode
+        towrite = (byte & ~mask) | mode
+        logging.debug("Byte to write to turn on the requested Output Mode: %x" % towrite)
+        bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
+        time.sleep(WAITTIME)
+        byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+        logging.info ("Set Output Mode (CTRL_REG1) Register After turning on the required mode: %x" % byte)
+        if (byte & mask) == mode:
+            print("Sensor Turned in to requested Output Mode: %x" % mode)
+        else:
+            print("Sensor Not in the requested Output Mode: %x" % mode)
+    else:
+        logging.debug("Set Output Mode is already set in the required mode")
+    return
+
+def ReadOutputMode():
+    # Read the Output mode bit and return RAW or NORMAL Mode
+    reg_addr = 0x26
+    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+    logging.info ("OUtput Mode Control Register Reading reading (%x):%x" % (reg_addr,byte))
+    # Decode the values
+    # Output Mode is bit 6
+    opm = (byte & 0b01000000)
+    logging.debug("Output Mode Reading setting %s" % opm)
+    if opm == RAW:
+        return RAW
+    return NORMAL
+
+def SetAltimeterMode(mode):
+    #Set the output mode in the CTRL_REG1 Register 0x26
+    # mode can be either ALTIMETER = 0b10000000 or BAROMETER = 0b00000000
+    reg_addr = 0x26
+    mask = 0b10000000
+    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+    logging.info ("Set Altimeter - Barometer Mode (CTRL_REG1) before setting (%x): %x" % (reg_addr,byte))
+    logging.debug("Requested Output Mode of operation %x" % mode)
+    if (byte & mask) != mode:
+        # Modify the register to set bit 0 to the mode
+        towrite = (byte & ~mask) | mode
+        logging.debug("Byte to write to turn on the requested Altimeter - Barometer Mode: %x" % towrite)
+        bus.write_byte_data(SENSOR_ADDR, reg_addr, towrite)
+        time.sleep(WAITTIME)
+        byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+        logging.info ("Set Altimeter - Barometer Mode (CTRL_REG1) Register After turning on the required mode: %x" % byte)
+        if (byte & mask) == mode:
+            print("Sensor Turned in to requested Altimeter - Barometer Mode: %x" % mode)
+        else:
+            print("Sensor Not in the requested Altimeter - Barometer Mode: %x" % mode)
+    else:
+        logging.debug("Set Altimeter - Barometer Mode is already set in the required mode")
+    return
+
+def ReadAltimeterMode():
+    # Read the Output mode bit and return mode (either ALTIMETER = 0b10000000 or BAROMETER = 0b00000000)
+    reg_addr = 0x26
+    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+    logging.info ("Altimeter - Barometer Mode Control Register Reading reading (0x%x):%x" % (reg_addr,byte))
+    # Decode the values
+    # Altimeter - Barometer Mode is bit 7
+    opm = (byte & 0b10000000)
+    logging.debug("Altimeter - Barometer Mode Reading setting %s" % opm)
+    if opm == ALTIMETER:
+        logging.info("Altimeter - Barometer Mode Control Register is Altimeter Mode")
+        return ALTIMETER
+    logging.info("Altimeter - Barometer Mode Control Register is Barometer Mode")
+    return BAROMETER
+
+def SetBarometricInput(sealevel):
+    # This is used to calibrate the sensor for the difference between current altitude and sea level.
+    # input is the equivalent Sea level presure, in 2 Pa units
+    # Default value is 1 standard atmosphere (atm) is defined as 101.325 kPa
+    data_addr = [0x14, 0x15]
+    # The value stored in the register is in 2 Pa units, so divide given value by 2 and remove fraction
+    sealevelvalue = int(sealevel / 2)
+    logging.info("Requested Sea Level Value and equivalent data to write: %f / %f" % (sealevel, sealevelvalue))
+    # Read out current reading first
+    data_h = bus.read_byte_data(SENSOR_ADDR,data_addr[0])
+    data_l = bus.read_byte_data(SENSOR_ADDR,data_addr[1])
+    logging.debug("Barometric Input Equivalent Sea Level current values (%x/%x):%x /%x" % (data_addr[0], data_addr[1], data_h, data_l))
+    current_offset = (data_h << 8) + data_l
+    logging.info("Current Sea Level offset %f and requried Sea Level Offset %f" % (current_offset, sealevelvalue))
+    if current_offset != sealevelvalue:
+        # The value required is different to the value currently set
+        towrite_h = (sealevelvalue >> 8)
+        towrite_l = (sealevelvalue & 0b0000000011111111)
+        # towrite_l may be 2 bytes, need to check during testing
+        logging.debug("New Sea Levels (high & low bytes) to Write in registers (%x, %x): %x / %x)" % (towrite_h, towrite_l, data_addr[0], data_addr[1]))
+        bus.write_byte_data(SENSOR_ADDR, data_addr[0], towrite_h)
+        time.sleep(WAITTIME)
+        bus.write_byte_data(SENSOR_ADDR, data_addr[1], towrite_l)
+        time.sleep(WAITTIME)
+        byte_h = bus.read_byte_data(SENSOR_ADDR,data_addr[0])
+        byte_l = bus.read_byte_data(SENSOR_ADDR,data_addr[1])
+        logging.info ("Set Barometric Input Equivalent Sea Level after writing the required value: %x /  %x" % (byte_h, byte_l))
+        byte = (byte_h << 8) + byte_l
+        if byte == sealevelvalue:
+            print("Barometric Input Equivalent Sea Level set to the requested value: %x" % byte)
+        else:
+            print("Barometric Input Equivalent Sea Level NOT set to the requested value: %x" % byte)
+    else:
+        logging.debug("Barometric Input Equivalent Sea Level is already set to the requested value")
+    return
+
+def ReadBarometricOffset():
+    # This is used to calibrate the sensor for the difference between current altitude and sea level.
+    # Value stored is the equivalent Sea level presure, in 2 Pa units
+    # Default value is 1 standard atmosphere (atm) is defined as 101.325 kPa
+    data_addr = [0x14, 0x15]
+    # Read out current reading
+    data_h = bus.read_byte_data(SENSOR_ADDR,data_addr[0])
+    data_l = bus.read_byte_data(SENSOR_ADDR,data_addr[1])
+    logging.debug("Barometric Input Equivalent Sea Level current values (%x/%x):%x /%x" % (data_addr[0], data_addr[1], data_h, data_l))
+    current_offset = ((data_h << 8) + data_l) * 2
+    logging.info("Current Sea Level offset %f" % current_offset)
+    print("Barometric Input Equivalent Sea Level is set to: %d" % current_offset)
+    return
+
+def ReadControlRegister1():
+    #Read out and decode Control Register 1 0x26
+    reg_addr = 0x26
+    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
+    logging.info ("Control Register 1 reading (%x):%x" % (reg_addr,byte))
+    # Decode the values
+    # SBYB - perodic reading mode
+    sbyb = (byte & 0b00000001)
+    logging.debug("System Mode %s" % sbyb)
+    if sbyb == 0b1:
+        print("Ps.3 System Mode is ACTIVE")
+    else:
+        print("Ps.3 System Mode is in STANDBY")
+    # Software Reset
+    sr = (byte & 0b00000100) >> 2
+    logging.debug("Software Reset Flag %s" % sr)
+    if sr == 0b1:
+        print("Ps.3 Software Reset  is Enabled")
+    else:
+        print("Ps.3 Software Reset is Disabled")
+    # Raw Mode
+    raw = (byte & 0b01000000) >> 6
+    logging.debug("Raw Mode  Flag %s" % raw)
+    if raw == 0b1:
+        print("Ps.3 Raw Mode is Enabled")
+    else:
+        print("Ps.3 Raw Mode is Disabled")
+    # Altitude / Barometric Mode
+    aorb = (byte & 0b10000000) >> 7
+    logging.debug("Altitude or Barometric Mode Flag %s" % aorb)
+    if aorb == 0b1:
+        print("Ps.3 Sensor is in Altimeter Mode")
+    else:
+        print("Ps.3 Sensor is in Barometer Mode")
     return
 
 
-######### Calculation Routines
-
-def ReadFullScaleMode():
-    #Read out and decode the XYZ_DATA_CFG Register 0x0E for Full Scale Mode
-    # Returns the multiplication factor to convert the reading to g values
-    reg_addr = 0x0E
-    byte = bus.read_byte_data(SENSOR_ADDR,reg_addr)
-    logging.info ("Full Scale Mode Reading XYZ_DATA_CFG Register reading (%x):%x" % (reg_addr,byte))
-    # Decode the values
-    # Full Scale Range setting
-    fsr = (byte & 0b00000011)
-    logging.debug("Full Scale Mode Reading  setting %s" % fsr)
-    if fsr == 0b00:
-        fsr_multiplier = 1/1024
-    elif fsr == 0b01:
-        fsr_multiplier = 1/512
-    elif fsr == 0b10:
-        fsr_multiplier = 1/256
-    return fsr_multiplier
-
-def ReadXAxisDataRegisters():
-    # Read the data out from the X Axis data registers 0x01 - msb, 0x02 bits 7 - 4 - lsb
-    data_addr = [0x02, 0x01]
-    data_l = bus.read_byte_data(SENSOR_ADDR,data_addr[0])
-    data_h = bus.read_byte_data(SENSOR_ADDR,data_addr[1])
-    logging.debug("X Axis Data Register values (%x/%x):%x /%x" % (data_addr[0], data_addr[1], data_h, data_l))
-    data_out = (data_h << 4) + (data_l >> 4)
-    logging.info("X Axis Data Register combined %x" % data_out)
-    return data_out
-
-def ReadYAxisDataRegisters():
-    # Read the data out from the Y Axis data registers 0x03 - msb, 0x04 bits 7 - 4 - lsb
-    data_addr = [0x04, 0x03]
-    data_l = bus.read_byte_data(SENSOR_ADDR,data_addr[0])
-    data_h = bus.read_byte_data(SENSOR_ADDR,data_addr[1])
-    logging.debug("Y Axis Data Register values (%x/%x):%x /%x" % (data_addr[0], data_addr[1], data_h, data_l))
-    data_out = (data_h << 4) + (data_l >> 4)
-    logging.info("Y Axis Data Register combined %x" % data_out)
-    return data_out
-
-def ReadZAxisDataRegisters():
-    # Read the data out from the Z Axis data registers 0x05 - msb, 0x06 bits 7 - 4 - lsb
-    data_addr = [0x06, 0x05]
-    data_l = bus.read_byte_data(SENSOR_ADDR,data_addr[0])
-    data_h = bus.read_byte_data(SENSOR_ADDR,data_addr[1])
-    logging.debug("Z Axis Data Register values (%x/%x):%x /%x" % (data_addr[0], data_addr[1], data_h, data_l))
-    data_out = (data_h << 4) + (data_l >> 4)
-    logging.info("Z Axis Data Register combined %x" % data_out)
-    return data_out
-
-def CalculateValues():
-    # Takes the readings and returns the x, y, z values
-    fsr = ReadFullScaleMode()
-    x = ReadXAxisDataRegisters()
-    x = TwosCompliment(x)
-    x = x * fsr
-    y = ReadYAxisDataRegisters()
-    y = TwosCompliment(y)
-    y = y * fsr
-    z = ReadZAxisDataRegisters ()
-    z = TwosCompliment(z)
-    z = z * fsr
-    return [x, y, z]
+######## Calculation Routines Used
 
 def TwosCompliment(value):
     # Convert the given 12bit hex value to decimal using 2's compliment
     return -(value & 0b100000000000) | (value & 0b011111111111)
+
+def TwosCompliment20(value):
+    # Convert the given 20bit hex value to decimal using 2's compliment
+    return -(value & 0b10000000000000000000) | (value & 0b01111111111111111111)
+
+def SignedNumber16(value):
+    # Takes the given number and return a signed version of it
+    # Assumes the number is 16 bit
+    sign = (value & 0b1000000000000000) >> 15
+    value = value & 0b0111111111111111
+    if sign == 0b1:
+        # Sign bit is set, so number is negative
+        value = value * -1
+    return value
+
+
+def SignedNumber24(value):
+    # Takes the given number and return a signed version of it
+    # Assumes the number is 24 bit
+    sign = (value & 0b100000000000000000000000) >> 23
+    value = value & 0b011111111111111111111111
+    if sign == 0b1:
+        # Sign bit is set, so number is negative
+        value = value * -1
+    return value
+
+def SignedNumber32(value):
+    # Takes the given number and return a signed version of it
+    # Assumes the number is 24 bit
+    sign = (value & 0b10000000000000000000000000000000) >> 31
+    value = value & 0b01111111111111111111111111111111
+    if sign == 0b1:
+        # Sign bit is set, so number is negative
+        value = value * -1
+    return value
+
+def ReadTemperature():
+    # Read the data out from the Temperature Registers OUT_T_MSB and OUT_T_LSB data registers
+    # Register 0x04 - msb, 0x05 bits 7 - 4 - lsb
+    # Number is stored as Q8.4, not Q12.4 as stated in the datasheet
+    data_addr = [0x04, 0x05]
+    data_h = bus.read_byte_data(SENSOR_ADDR,data_addr[0])
+    data_l = bus.read_byte_data(SENSOR_ADDR,data_addr[1])
+    logging.debug("OUT_T Data Register values (0x%x/0x%x):%x /%x" % (data_addr[0], data_addr[1], data_h, data_l))
+    # value is 8 its from data_h and uppper 4 bits from data_l, but for now just merge them together
+    data_out = (data_h << 8) + data_l
+    # output is a signed number.
+    data_out = SignedNumber16(data_out)
+    # Because I merged the numbers together earlier, I now need to divide by 256 to get the right number
+    data_out = data_out / 256
+    logging.info("OUT_T Registers combined %x" % data_out)
+    return data_out
+
+def ReadPressure():
+    # Read and retuyrn the pressure value read from the OUT_P_MSB, OUT_P_CSB and OUT_P_LSB registers
+    # Registers are 0x01, 0x02, 0x03
+    # Value read is dependent on the mode of operation
+    data_addr = [0x01, 0x02, 0x03]
+    # units is used to return the units of the value
+    units = ""
+    data_h = bus.read_byte_data(SENSOR_ADDR,data_addr[0])
+    data_c = bus.read_byte_data(SENSOR_ADDR,data_addr[1])
+    data_l = bus.read_byte_data(SENSOR_ADDR,data_addr[2])
+    logging.debug("OUT_P Data Register values (%x/%x/%x):%x / %x / %x" % (data_addr[0], data_addr[1], data_addr[1], data_h, data_c, data_l))
+    # The value in the register is dependent on the mode of operation, Altitude or barometer or raw.
+    if ReadOutputMode() == RAW:
+        # In this mode, the value is all 24 bits and no fraction / sign
+        logging.info("Mode is RAW, so the value is retured")
+        data_out = (data_h << 16) + (data_c << 8) + data_l
+        logging.debug("24 bit number retrieved from the sensor: %x" % data_out)
+        units = ""
+        return [data_out, units]
+    if ReadAltimeterMode() == ALTIMETER:
+        # In this mode, the data is a 20 bit signed Q16.4 format number
+        # Therefore current value needs signing and dividing by 65536
+        data_out = (data_h << 24) + (data_c << 16) + (data_l << 8)
+        logging.debug("32 bit number retrieved from the sensor: %x" % data_out)
+        data_out = SignedNumber32(data_out)
+        logging.debug("Altimeter Pressure Converted using Signed Number %f" % data_out)
+        data_out = data_out / 65536
+        logging.info("Altimeter Pressure Value being returned %f" % data_out)
+        units = "Meters"
+    else:
+        # In this mode the data is in signed Q18.2
+        # Therefore current value needs signing and dividing by 64
+        data_out = (data_h << 16) + (data_c << 8) + data_l
+        logging.debug("24 bit number retrieved from the sensor: %x" % data_out)
+        # pressure is unsigned
+        #data_out = SignedNumber(data_out)
+        #logging.debug("Barometer Pressure Converted using Signed Number %f" % data_out)
+        data_out = data_out / 64
+        logging.info("Barometer Pressure Value being returned %f" % data_out)
+        units = "Pascals"
+    return [data_out, units]
+
+def ReadTemperatureDelta():
+    # Read the data out from the Temperature Delta Registers OUT_T_DELTA_MSB and OUT_T_DELTA_LSB data registers
+    # Register 0x0A - msb, 0x0B bits 7 - 4 - lsb
+    # Number is stored as Q8.4, not Q12.4 as stated in the datasheet as degress C
+
+    #Not sure if this is stored as a 2'c compliment, assumes so at the moment
+
+    data_addr = [0x0A, 0x0B]
+    data_h = bus.read_byte_data(SENSOR_ADDR,data_addr[0])
+    data_l = bus.read_byte_data(SENSOR_ADDR,data_addr[1])
+    logging.debug("OUT_T Delta Data Register values (%x/%x):%x /%x" % (data_addr[0], data_addr[1], data_h, data_l))
+    # value is 8 its from data_h and uppper 4 bits from data_l, but for now just merge them together
+    data_out = (data_h << 8) + data_l
+    # output is a 2's compliment number.
+    data_out = TwosCompliment(data_out)
+    # Because I merged the numbers together earlier, I now need to divide by 256 to get the right number
+    data_out = data_out / 256
+    logging.info("OUT_T Delta Registers combined %x" % data_out)
+    return data_out
+
+def ReadPressureDelta():
+    # Read and return the pressure delta value read from the OUT_P_DELTA_MSB, OUT_P_DELTA_CSB and OUT_P_DELTA_LSB registers
+    # Registers are 0x07, 0x08, 0x09
+    # Value read is dependent on the mode of operation
+    data_addr = [0x07, 0x08, 0x09]
+    # units is used to return the units of the value
+    units = ""
+    data_h = bus.read_byte_data(SENSOR_ADDR,data_addr[0])
+    data_c = bus.read_byte_data(SENSOR_ADDR,data_addr[1])
+    data_l = bus.read_byte_data(SENSOR_ADDR,data_addr[2])
+    logging.debug("OUT_P_DELTA Data Register values (%x/%x/%x):%x / %x / %x" % (data_addr[0], data_addr[1], data_addr[2], data_h, data_c, data_l))
+    data_out = (data_h << 16) + (data_c << 8) + data_l
+    logging.debug("24 bit number retrieved from the sensor: %x" % data_out)
+    # The value in the register is dependent on the mode of operation, Altitude or barometer or raw.
+    if ReadOutputMode() == RAW:
+        # In this mode, the value is not used
+        logging.info("Mode is RAW, no value is retured")
+        return [0, units]
+    if ReadAltimeterMode() == ALTIMETER:
+        # In this mode, the data is a 20 bit 2's compliment number, with 4 decimal places
+        # Therefore current value needs 2'c compliment and dividing by 256 as the lowest 8 bits are fractions
+        data_out = TwosCompliment20(data_out)
+        logging.debug("Altimeter Pressure Delta Converted using 2's Compliment Number %f" % data_out)
+        data_out = data_out / 256
+        logging.info("Altimeter Pressure Delta Value being returned %f" % data_out)
+        units = "Meters"
+    else:
+        # In this mode the data is a 2'c compliment number with 2 bits being fraction
+        # Therefore current value needs 2's compliment and dividing by 64
+        data_out = TwosCompliment20(data_out)
+        logging.debug("Barometer Pressure Delta Converted using 2's compliment Number %f" % data_out)
+        data_out = data_out / 64
+        logging.info("Barometer Pressure Delta Value being returned %f" % data_out)
+        units = "Pascals"
+    return [data_out, units]
 
 def HelpText():
     # show the help text
     print("**************************************************************************\n")
     print("Available commands: -")
     print("\n")
-    print("T - Self Test")
+    print("t - Read Temperature")
+    print("l - Read Temperature Delta")
     print("w - Who Am I")
     print("A - Read all data blocks")
-    print("x - Read Axis Values")
     print("r - Software Reset")
     print("c - Read Configuration Data")
+    print("o - Set Output Mode")
     print("s - Set System Mode")
-    print("f - Set Full Scale Mode")
+    print("a - Set Measurement Mode")
+    print("p - Read Pressure")
+    print("B - Read Current Barometric Offset")
+    print("b - Set Barometric Input")
+    print("d - Read Pressure Deltas")
+
     print("e - Exit Program")
 
 
@@ -409,18 +515,16 @@ def HelpText():
 # main code loop
 
 print ("Bostin Technology Ltd")
-print ("Cogniot Products")
-print ("Ps.3 - TO BE COMPLETED")
+print ("CognIot Products")
 print ("")
 print ("Press h for help")
 print ("")
 
 bus = smbus.SMBus(1)
 
-SetRepeatedStartMode()
-
 logging.basicConfig(filename="Ps_3.txt", filemode="w", level=logging.DEBUG, format='%(asctime)s:%(levelname)s:%(message)s')
 
+SetRepeatedStartMode()
 
 while True:
     choice = input ("Select Menu Option:")
@@ -431,54 +535,65 @@ while True:
         ReadAllData()
     elif choice == "E" or choice == "e":
         sys.exit()
-    #elif choice == "T":
-        #EnableSelfTest()
+    elif choice == "t":
+        temp = ReadTemperature()
+        print("Current Temperature %f Deg C" % temp)
+    elif choice == "l":
+        temp_delta = ReadTemperatureDelta()
+        print("Current Temperature Delta %f Deg C" % temp_delta)
     elif choice == "w":
         WhoAmI()
-    #elif choice == "x":
-        #g_force = CalculateValues()
-        #print(" Y |             :%f" % g_force[1])
-        #print("   |")
-        #print("   |   Z         :%f" % g_force[2])
-        #print("   |  / ")
-        #print("   | /")
-        #print("   |_________ X  :%f" % g_force[0])
-        #print("/n")
-    #elif choice == "r":
-        #SoftwareReset()
-    #elif choice == "c":
-        #ReadF_Setup()
-        #ReadSystemMode()
-        #ReadXYZ_Data_Cfg()
-        #ReadControlRegister2()
-    #elif choice == "s":
-        ##Set System Mode()
-        #print("Select =Mode:-")
-        #print("1 - STANDBY")
-        #print("2 - WAKE")
-        #print("3 - SLEEP")
-        #print("0 - return")
-        #mode = int(input ("Mode:"))
-        #if mode == 1:
-            #SetSystemMode(STANDBY)
-        #elif mode == 2:
-            #SetSystemMode(WAKE)
-        #elif mode == 3:
-            #SetSystemMode(SLEEP)
-    #elif choice == "f":
-        ## Set Full Scale Mode()
-        #print("Select Full Scale Range:-")
-        #print("2 - 2 G")
-        #print("4 - 4 G")
-        #print("8 - 8 G")
-        #print("0 - return")
-        #full = int(input ("Range:"))
-        #if full == 2:
-            #SetFullScaleMode(TWOG)
-        #elif full == 2:
-            #SetFullScaleMode(FOURG)
-        #elif full == 3:
-            #SetFullScaleMode(EIGHTG)
+    elif choice == "B":
+        ReadBarometricOffset()
+    elif choice == "p":
+        pres = ReadPressure()
+        print("\nCurrent Reading is %f %s" % (pres[0], pres[1]))
+    elif choice == "d":
+        pres_delta = ReadPressureDelta()
+        print("\nCurrent Pressure Delta is %f %s" % (pres_delta[0], pres_delta[1]))
+    elif choice == "r":
+        SoftwareReset()
+    elif choice == "c":
+        print("Read configuration data")
+        ReadControlRegister1()
+    elif choice == "s":
+        #Set System Mode()
+        print("Select =Mode:-")
+        print("1 - STANDBY")
+        print("2 - ACTIVE")
+        print("0 - return")
+        mode = int(input ("Mode:"))
+        if mode == 1:
+            SetSystemMode(STANDBY)
+        elif mode == 2:
+            SetSystemMode(ACTIVE)
+    elif choice == "o":
+        # Set Output Mode()
+        print("Select Output Mode:-")
+        print("1 - Normal Mode")
+        print("2 - Raw Mode")
+        print("0 - return")
+        full = int(input ("Range:"))
+        if full == 1:
+            SetOutputMode(NORMAL)
+        elif full == 2:
+            SetOutputMode(RAW)
+    elif choice == "b":
+        # Set the required barometric input
+        print(" Enter required Barometric Input in Pascals")
+        reqd = int(input("Pressure Value:"))
+        SetBarometricInput(reqd)
+    elif choice == "a":
+        #Set Altimeter Mode()
+        print("Select =Mode:-")
+        print("1 - ALTIMETER")
+        print("2 - BAROMETER")
+        print("0 - return")
+        mode = int(input ("Mode:"))
+        if mode == 1:
+            SetAltimeterMode(ALTIMETER)
+        elif mode == 2:
+            SetAltimeterMode(BAROMETER)
     else:
         print("Unknown Option")
         print("")

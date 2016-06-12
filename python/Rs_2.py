@@ -94,7 +94,8 @@ def SetRepeatedStartMode():
         response = subprocess.call("echo -n 1 > /sys/module/i2c_bcm2708/parameters/combined", shell=True)
         logging.debug("Used subprocess call to set Repeated Start command and got this response %x" % response)
     except:
-        logging.critical("Failed to Set Repeated Start mode, program aborted")
+        e = sys.exc_info()
+        logging.critical("Failed to Set Repeated Start mode, program aborted with response %s: %s" % (e[0], e[1]))
         print("Failed to Set Repeated Start mode, program aborted")
         sys.exit()
 
@@ -217,7 +218,7 @@ def ReadControlRegister2():
         print("Rs.2 Self Test is Disabled")
     # Software Reset
     sr = (byte & 0b01000000) >> 6
-    logging.debug("Self Test  Flag %s" % sr)
+    logging.debug("Software Reset Flag %s" % sr)
     if sr == 0b1:
         print("Rs.2 Software Reset  is Enabled")
     else:
